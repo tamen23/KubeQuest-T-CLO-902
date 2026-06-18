@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: laravel
+  namespace: kubequest
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: laravel
+  template:
+    metadata:
+      labels:
+        app: laravel
+    spec:
+      containers:
+      - name: laravel
+        image: bitnami/laravel:latest
+        ports:
+        - containerPort: 80
+        env:
+        - name: DB_CONNECTION
+          value: mysql
+        - name: DB_HOST
+          value: mysql
+        - name: DB_PORT
+          value: "3306"
+        - name: DB_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: MYSQL_DATABASE
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: MYSQL_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: MYSQL_PASSWORD

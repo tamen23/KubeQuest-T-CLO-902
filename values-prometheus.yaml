@@ -1,0 +1,64 @@
+grafana:
+  nodeSelector:
+    node-role.kubernetes.io/monitoring: monitoring
+
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 5Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+prometheus:
+  prometheusSpec:
+    nodeSelector:
+      node-role.kubernetes.io/monitoring: monitoring
+
+    retention: 7d
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 10Gi
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+
+alertmanager:
+  alertmanagerSpec:
+    nodeSelector:
+      node-role.kubernetes.io/monitoring: monitoring
+
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 2Gi
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 300m
+        memory: 256Mi

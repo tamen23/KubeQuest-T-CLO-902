@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apps/v1","kind":"StatefulSet","metadata":{"annotations":{},"name":"mysql","namespace":"kubequest"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"mysql"}},"serviceName":"mysql","template":{"metadata":{"labels":{"app":"mysql"}},"spec":{"containers":[{"envFrom":[{"secretRef":{"name":"mysql-secret"}}],"image":"mysql:8.0","name":"mysql","volumeMounts":[{"mountPath":"/var/lib/mysql","name":"data"}]}]}},"volumeClaimTemplates":[{"metadata":{"name":"data"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"5Gi"}}}}]}}
+  creationTimestamp: "2026-06-13T17:47:00Z"
+  generation: 1
+  name: mysql
+  namespace: kubequest
+  resourceVersion: "917552"
+  uid: bb8171f0-f3f0-44ff-be4d-89f008565384
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  podManagementPolicy: OrderedReady
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: mysql
+  serviceName: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - envFrom:
+        - secretRef:
+            name: mysql-secret
+        image: mysql:8.0
+        imagePullPolicy: IfNotPresent
+        name: mysql
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /var/lib/mysql
+          name: data
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+  updateStrategy:
+    rollingUpdate:
+      partition: 0
+    type: RollingUpdate
+  volumeClaimTemplates:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 5Gi
+      volumeMode: Filesystem
+    status:
+      phase: Pending
+status:
+  availableReplicas: 1
+  collisionCount: 0
+  currentReplicas: 1
+  currentRevision: mysql-86b8c5fb87
+  observedGeneration: 1
+  readyReplicas: 1
+  replicas: 1
+  updateRevision: mysql-86b8c5fb87
+  updatedReplicas: 1

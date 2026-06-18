@@ -1,0 +1,8 @@
+envFrom:
+  - secretRef:
+      name: app-secretcontainers:
+  - name: app
+    image: maxi2/crementation-app:latest
+    envFrom:
+      - secretRef:
+          name: app-secret

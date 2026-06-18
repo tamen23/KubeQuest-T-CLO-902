@@ -1,0 +1,88 @@
+replicaCount: 2
+
+image:
+  repository: maxi2/crementation-app
+  tag: v1.0.1
+  pullPolicy: Always
+
+imagePullSecrets:
+  - name: dockerhub-secret
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podLabels:
+  app.kubernetes.io/managed-by: Helm
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: crementation.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+volumes: []
+
+volumeMounts: []
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - crementation

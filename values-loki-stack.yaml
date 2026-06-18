@@ -1,0 +1,27 @@
+loki:
+  enabled: true
+
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 10Gi
+
+  nodeSelector:
+    node-role.kubernetes.io/monitoring: monitoring
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+promtail:
+  enabled: true
+
+  nodeSelector:
+    kubernetes.io/os: linux
+
+grafana:
+  enabled: false
