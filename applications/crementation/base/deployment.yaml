@@ -54,7 +54,7 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
           - |
-            sed -i '/DocumentRoot/a \ \t<Directory ${APACHE_DOCUMENT_ROOT}>\n\t\tAllowOverride All\n\t</Directory>' /etc/apache2/sites-available/000-default.conf
+            sed -i '/DocumentRoot/a \ \t<Directory ${APACHE_DOCUMENT_ROOT}>\n\t\tAllowOverride All\n\t\tDirectoryIndex index.php index.html\n\t</Directory>' /etc/apache2/sites-available/000-default.conf
             a2enmod rewrite || true
             php artisan migrate --force || true
             chmod -R 777 /var/www/html/storage /var/www/html/bootstrap/cache || true
