@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: crementation
+  labels:
+    app.kubernetes.io/name: postgres-backup
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "0 2 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: postgres-backup
+        spec:
+          restartPolicy: OnFailure
+
+          containers:
+          - name: postgres-backup
+            image: postgres:18
+            imagePullPolicy: IfNotPresent
+
+            env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-postgresql
+                  key: postgres-password
+
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 300m
+                memory: 256Mi
+
+            command:
+            - /bin/bash
+            - -c
+            - |
+              mkdir -p /backup
+
+              pg_dump \
+                -h postgres-postgresql \
+                -U postgres \
+                postgres \
+                > /backup/postgres-$(date +%F-%H-%M-%S).sql
+
+              find /backup -type f -mtime +7 -delete
+
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: postgres-backup-pvc
