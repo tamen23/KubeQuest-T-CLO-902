@@ -1,0 +1,65 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"laravel-svc","namespace":"kubequest"},"spec":{"ports":[{"port":80,"targetPort":80}],"selector":{"app":"laravel"}}}
+    creationTimestamp: "2026-06-13T16:36:25Z"
+    name: laravel-svc
+    namespace: kubequest
+    resourceVersion: "711153"
+    uid: 16b9e574-4cad-42b7-afb4-99ce0f4c5a76
+  spec:
+    clusterIP: 10.108.36.91
+    clusterIPs:
+    - 10.108.36.91
+    externalTrafficPolicy: Cluster
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - nodePort: 30080
+      port: 80
+      protocol: TCP
+      targetPort: 80
+    selector:
+      app: laravel
+    sessionAffinity: None
+    type: NodePort
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Service","metadata":{"annotations":{},"name":"mysql","namespace":"kubequest"},"spec":{"ports":[{"port":3306}],"selector":{"app":"mysql"}}}
+    creationTimestamp: "2026-06-13T16:35:52Z"
+    name: mysql
+    namespace: kubequest
+    resourceVersion: "580274"
+    uid: be278f00-511a-49c2-a441-20f2a0dd337d
+  spec:
+    clusterIP: 10.111.49.84
+    clusterIPs:
+    - 10.111.49.84
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - port: 3306
+      protocol: TCP
+      targetPort: 3306
+    selector:
+      app: mysql
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+kind: List
+metadata:
+  resourceVersion: ""

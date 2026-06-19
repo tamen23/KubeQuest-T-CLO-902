@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    meta.helm.sh/release-name: crementation
+    meta.helm.sh/release-namespace: crementation
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  labels:
+    app.kubernetes.io/instance: crementation
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: crementation
+    app.kubernetes.io/version: 1.16.0
+    helm.sh/chart: crementation-0.1.0
+  name: crementation
+  namespace: crementation
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - crementation.18.194.46.243.nip.io
+    secretName: crementation-tls
+  rules:
+  - host: crementation.18.194.46.243.nip.io
+    http:
+      paths:
+      - backend:
+          service:
+            name: crementation
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
