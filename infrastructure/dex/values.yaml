@@ -1,19 +1,36 @@
 config:
-  enablePasswordDB: true
   issuer: http://dex.auth.svc.cluster.local:5556
-  staticClients:
-  - id: oauth2-proxy
-    name: oauth2-proxy
-    redirectURIs:
-    - http://laravel.local/oauth2/callback
-    secret: HFadvNnR37ho1xAWvMc6qXtKtA9BRuD+QFbXLAXo2YA=
+
   storage:
     type: memory
+
   web:
     http: 0.0.0.0:5556
-  staticPasswords:
-  - email: "admin@kubequest.com"
-    # bcrypt hash of the string "password"
-    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTTsOWsG8HUlu/AW7ePbdfIe1Qjm"
-    username: "admin"
-    userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"
+
+  enablePasswordDB: false
+
+  staticClients:
+    - id: oauth2-proxy
+      name: "oauth2-proxy"
+      secret: WEtFXLmTk5v7RUgMKGaoE6IBwj35c/3EReJc2dJnX7Q=
+      redirectURIs:
+        - http://laravel.local/oauth2/callback
+
+  connectors:
+    - type: github
+      id: github
+      name: GitHub
+      config:
+        clientID: Ov23li732Qnk3366l1IN
+        clientSecret: 7784baec4762d62220250e9c27f8ebce7c8b8209
+        redirectURI: http://dex.auth.svc.cluster.local:5556/callback
+        orgs:
+          - name: maxiboole2
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi

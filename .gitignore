@@ -1,0 +1,3 @@
+*.tar.gz
+applications/mysql/secrets/*
+!applications/mysql/secrets/.gitkeep

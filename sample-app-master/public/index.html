@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Hello world sample app</title>
+    <script>
+      async function getValue() {
+        const res = await fetch('/api/counter/count');
+        const json = await res.json();
+        document.getElementById('value').textContent = json.value;
+      }
+      async function addOne() {
+        const res = await fetch('/api/counter/add');
+        const json = await res.json();
+        document.getElementById('value').textContent = json.value;
+      }
+      document.addEventListener('DOMContentLoaded', function(){
+        getValue();
+        document.getElementById('add').addEventListener('click', addOne);
+      });
+    </script>
+  </head>
+  <body>
+    <h1>Hello world sample app</h1>
+    <p>Counter: <span id="value">...</span></p>
+    <button id="add">+1</button>
+  </body>
+</html>
