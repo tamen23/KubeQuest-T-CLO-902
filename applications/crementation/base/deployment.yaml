@@ -30,6 +30,7 @@ spec:
       annotations:
         config.linkerd.io/proxy-cpu-request: 50m
         config.linkerd.io/proxy-memory-request: 64Mi
+        config.linkerd.io/skip-outbound-ports: "3306"
       labels:
         app.kubernetes.io/instance: crementation
         app.kubernetes.io/managed-by: Helm
@@ -50,10 +51,14 @@ spec:
       containers:
       - image: maxi2/crementation-app:v8
         imagePullPolicy: Always
-        lifecycle:
-          postStart:
-            exec:
-              command: ["/bin/sh", "-c", "chmod -R 777 /var/www/html/storage /var/www/html/bootstrap/cache || true"]
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            sed -i '/DocumentRoot/a \ \t<Directory ${APACHE_DOCUMENT_ROOT}>\n\t\tAllowOverride All\n\t</Directory>' /etc/apache2/sites-available/000-default.conf
+            a2enmod rewrite || true
+            php artisan migrate --force || true
+            chmod -R 777 /var/www/html/storage /var/www/html/bootstrap/cache || true
+            exec apache2-foreground
         livenessProbe:
           failureThreshold: 3
           httpGet:
