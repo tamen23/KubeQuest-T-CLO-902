@@ -1,0 +1,14 @@
+# Wraps crementation-logs.json in a ConfigMap carrying the grafana_dashboard=1
+# label kube-prometheus-stack's Grafana sidecar watches for
+# (sidecar.dashboards.enabled/label/labelValue — chart defaults, not
+# overridden in values-prometheus.yaml). The sidecar auto-imports any
+# matching ConfigMap in any namespace; no manual "import dashboard" click
+# needed after this applies.
+configMapGenerator:
+  - name: crementation-logs-dashboard
+    namespace: monitoring
+    files:
+      - crementation-logs.json
+    options:
+      labels:
+        grafana_dashboard: "1"

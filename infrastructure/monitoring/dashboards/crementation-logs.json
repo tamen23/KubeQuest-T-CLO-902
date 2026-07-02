@@ -1,0 +1,83 @@
+{
+  "title": "Crementation - Logs",
+  "uid": "crementation-logs",
+  "tags": ["crementation", "logs", "loki"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "level",
+        "type": "custom",
+        "query": "ERROR,WARNING,INFO,DEBUG,CRITICAL,.*",
+        "current": { "text": "all", "value": ".*" },
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "pod",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": "label_values({namespace=\"crementation\"}, pod)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Log volume by level",
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "description": "Requires LOG_CHANNEL=stderr + LOG_STDERR_FORMATTER=Monolog\\Formatter\\JsonFormatter (crementation/values.yaml) so Monolog emits JSON with a level_name field for `| json` to parse.",
+      "targets": [
+        {
+          "expr": "sum by (level_name) (count_over_time({namespace=\"crementation\", pod=~\"$pod\"} | json | __error__=\"\" [1m]))",
+          "legendFormat": "{{level_name}}"
+        },
+        {
+          "expr": "sum(count_over_time({namespace=\"crementation\", pod=~\"$pod\"} | json | __error__!=\"\" [1m]))",
+          "legendFormat": "unparsed (not JSON — check LOG_CHANNEL/LOG_STDERR_FORMATTER)"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Filtered log stream (level=$level, pod=$pod)",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "{namespace=\"crementation\", pod=~\"$pod\"} | json | level_name=~\"$level\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Error rate (5xx-shaped log lines, raw text match)",
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
+      "description": "Raw substring match, independent of the JSON parsing above — still works even if a request never got JSON-formatted (e.g. an Apache-level 500 before Laravel's logger ran).",
+      "targets": [
+        {
+          "expr": "sum(rate({namespace=\"crementation\", pod=~\"$pod\"} |~ `(?i)(error|exception|fatal|500)` [1m]))",
+          "legendFormat": "errors/sec"
+        }
+      ]
+    }
+  ]
+}

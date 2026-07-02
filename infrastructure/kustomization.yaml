@@ -22,6 +22,7 @@ resources:
   - external-secrets/external-secrets.yaml
   - dex/external-secret.yaml
   - monitoring/prometheus/rbac.yaml
+  - monitoring/dashboards
   # Must apply after the cert-manager helmChart below (CRDs + webhook need to
   # exist first) — see docs/deployment/deployment.md for the two-pass apply.
   - cert-manager/cluster-issuers.yaml
