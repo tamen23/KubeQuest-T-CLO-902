@@ -25,6 +25,16 @@ env:
     value: mysql
   - name: DB_PORT
     value: "3306"
+  # Default Laravel config (sample-app-master/config/logging.php) writes
+  # plain-text lines to a file inside the container, which Alloy (tails
+  # stdout/stderr only, see infrastructure/monitoring/loki/values-alloy.yaml)
+  # never sees. LOG_CHANNEL=stderr + a JSON formatter makes logs both
+  # reachable by the log shipper and parseable by the LogQL `| json` filters
+  # in infrastructure/monitoring/dashboards/crementation-logs.json.
+  - name: LOG_CHANNEL
+    value: stderr
+  - name: LOG_STDERR_FORMATTER
+    value: "Monolog\\Formatter\\JsonFormatter"
 
 nameOverride: ""
 fullnameOverride: ""
