@@ -8,6 +8,24 @@ image:
 imagePullSecrets:
   - name: dockerhub-secret
 
+# DB_HOST / DB_DATABASE / DB_USERNAME / DB_PASSWORD / APP_KEY, sourced from
+# Vault via the laravel-db ExternalSecret
+# (infrastructure/external-secrets/external-secrets.yaml).
+envFrom:
+  - secretRef:
+      name: laravel-db
+
+# Non-secret Laravel runtime config (mirrors sample-app-master/docker-compose.yaml).
+env:
+  - name: APP_ENV
+    value: production
+  - name: APP_DEBUG
+    value: "false"
+  - name: DB_CONNECTION
+    value: mysql
+  - name: DB_PORT
+    value: "3306"
+
 nameOverride: ""
 fullnameOverride: ""
 
@@ -17,14 +35,26 @@ serviceAccount:
   annotations: {}
   name: ""
 
-podAnnotations: {}
+# linkerd.io mesh sidecar tuning: keep the proxy's own resource footprint small,
+# and skip meshing the MySQL port so DB traffic isn't proxied.
+podAnnotations:
+  config.linkerd.io/proxy-cpu-request: "50m"
+  config.linkerd.io/proxy-memory-request: "64Mi"
+  config.linkerd.io/skip-outbound-ports: "3306"
 
 podLabels:
   app.kubernetes.io/managed-by: Helm
 
+# NOTE: the php:8.2-apache base image runs apache2-foreground as root to bind
+# port 80 and its entrypoint chmods storage/ at startup, so runAsNonRoot is not
+# safe here without reworking the image (see sample-app-master/Dockerfile).
 podSecurityContext: {}
 
-securityContext: {}
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
 
 service:
   type: ClusterIP
@@ -76,13 +106,11 @@ tolerations: []
 
 affinity:
   podAntiAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        podAffinityTerm:
-          topologyKey: kubernetes.io/hostname
-          labelSelector:
-            matchExpressions:
-              - key: app.kubernetes.io/name
-                operator: In
-                values:
-                  - crementation
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - topologyKey: kubernetes.io/hostname
+        labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - crementation
