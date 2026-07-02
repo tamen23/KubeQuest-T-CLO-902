@@ -6,10 +6,9 @@ use Illuminate\Http\Request;
 
 /**
  * Deliberate failure-injection endpoints for the KubeQuest defense demo (see
- * docs/deployment/defense.md's "broken deployment + automatic rollback" and
- * "autoscaling demo" sections and the brief's own suggestion to "enrich the
- * applications code with some memory leaks, loops consuming CPU, or anything
- * that could lead to errors and container failure").
+ * the README's "Defense day runbook" section and the brief's own suggestion
+ * to "enrich the applications code with some memory leaks, loops consuming
+ * CPU, or anything that could lead to errors and container failure").
  *
  * These routes only exist when DEBUG_ENDPOINTS_ENABLED=true (see routes/api.php)
  * — never enabled by default, and crementation/values.yaml does not set it.
@@ -21,7 +20,7 @@ class DebugController extends Controller
      * of seconds (default 30, capped at 120). With enough concurrent requests
      * this drives the pod's CPU usage past the HPA's targetCPUUtilizationPercentage
      * (crementation/values.yaml, currently 70%), triggering a live scale-up —
-     * see docs/deployment/defense.md's autoscaling demo script.
+     * see the README's autoscaling demo script.
      */
     public function burnCpu(Request $request)
     {

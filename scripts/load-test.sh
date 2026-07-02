@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Reusable load-test script for the KubeQuest defense demo
-# (docs/deployment/defense.md's autoscaling section).
+# (see the README's "Defense day runbook" -> autoscaling demo section).
 #
 # Usage:
 #   ./scripts/load-test.sh <ingress-ip-or-hostname> [duration] [concurrency]

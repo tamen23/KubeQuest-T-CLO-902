@@ -5,7 +5,7 @@
 # config file against its own process environment (os.ExpandEnv), so mounting
 # dex-secrets via envFrom is enough to fill in the values below.
 #
-# See docs/deployment/deployment.md for the full secret-bootstrap procedure.
+# See the README's "Deployment" section for the full secret-bootstrap procedure.
 envFrom:
   - secretRef:
       name: dex-secrets

@@ -6,8 +6,8 @@
 # `kubectl apply`), but once it's up, everything AFTER it — including changes
 # to ArgoCD's own values.yaml here — flows through the Application manifests
 # in this same directory (argocd-apps.yaml), not through manual kubectl/helm
-# commands. See docs/ARGOCD.md for the full explanation and the manual-apply
-# fallback if ArgoCD itself needs to be reinstalled.
+# commands. See the README's "ArgoCD" section for the full explanation and
+# the manual-apply fallback if ArgoCD itself needs to be reinstalled.
 server:
   # Exposed through ingress-nginx, gated by oauth2-proxy/Dex, same pattern as
   # dashboard and Grafana.

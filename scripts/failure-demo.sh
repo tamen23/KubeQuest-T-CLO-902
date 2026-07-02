@@ -2,7 +2,7 @@
 # Drives the debug failure-injection endpoints
 # (sample-app-master/app/Http/Controllers/DebugController.php) for the
 # defense demo's "broken deployment" / resource-limit sections
-# (docs/deployment/defense.md).
+# (see the README's "Defense day runbook" section).
 #
 # REQUIRES DEBUG_ENDPOINTS_ENABLED=true to be set on the crementation
 # Deployment first — see crementation/values.yaml's env block. This script
@@ -53,7 +53,7 @@ case "$MODE" in
     curl -sk -o /dev/null -w '%{http_code}\n' -H "Host: crementation.local" \
       "https://${TARGET}/api/debug/crash"
     echo "For a container-level crash (to demo rollback), instead redeploy with a broken image tag —"
-    echo "see docs/deployment/defense.md section 4."
+    echo "see the README's 'Broken deployment + automatic rollback' section."
     ;;
 
   *)

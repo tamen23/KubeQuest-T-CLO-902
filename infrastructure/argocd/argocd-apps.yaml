@@ -5,7 +5,7 @@
 # necessary exception — see values.yaml's bootstrap note).
 #
 # All three point at the same repo/branch and use kustomize build options
-# matching what docs/deployment/deployment.md already documents manually
+# matching what the README's Deployment section already documents manually
 # (--enable-helm), so switching between "ArgoCD does it" and "I do it by
 # hand" never requires different config.
 apiVersion: argoproj.io/v1alpha1

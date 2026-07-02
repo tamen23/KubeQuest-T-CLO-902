@@ -2,23 +2,505 @@
 
 Kubernetes GitOps deployment for the KubeQuest project: a full cluster
 platform (ingress, dashboard, monitoring, logging, secrets, auth, policy)
-plus a Laravel + MySQL application converted from docker-compose to Helm/Kustomize.
-
-## Documentation
-
-- [Architecture](docs/ARCHITECTURE.md) — infrastructure layout, namespaces, data flow
-- [Deployment](docs/deployment/deployment.md) — step-by-step apply order (kubectl/kustomize/helm)
-- [Defense runbook](docs/deployment/defense.md) — live demo script (autoscaling, broken deploy + rollback)
-- [ArgoCD](docs/ARGOCD.md) — optional GitOps auto-sync layer
-- [CI/CD](docs/CI-CD.md) — image scanning, manifest linting
-- [Grafana dashboards](docs/GRAFANA-DASHBOARDS.md) — log filtering setup
-- [Security review](docs/SECURITY-REVIEW.md) — Helm chart security evaluation
+plus a Laravel + MySQL application converted from docker-compose to
+Helm/Kustomize.
 
 ## Repository layout
 
-- `crementation/` — Helm chart for the app
-- `applications/` — Kustomize trees deploying the app + MySQL
-- `infrastructure/` — cluster-wide platform components
-- `backups/` — database backup CronJobs
-- `sample-app-master/` — the original Laravel application source
+- `crementation/` — Helm chart for the app (source of truth for its manifests)
+- `applications/crementation/` — Kustomize base/overlay that renders the chart above via `kustomize build --enable-helm`
+- `applications/mysql/` — Kustomize wrapper around the official Bitnami MySQL chart
+- `infrastructure/` — cluster-wide platform components (ingress, dashboard, monitoring, logging, secrets, auth, policy), one `values.yaml` per component plus a top-level `kustomization.yaml`
+- `infrastructure/network-policies/` — deny-by-default NetworkPolicy per namespace
+- `infrastructure/argocd/` — ArgoCD Helm values + the Application manifests it uses to watch this repo
+- `backups/mysql/` — CronJob + PVC for nightly `mysqldump` backups
+- `components/gatekeeper/` — the OPA policy (ConstraintTemplate + Constraint) that rejects `:latest` image tags
+- `.github/workflows/ci.yml` — image build + CVE scan, manifest lint, NetworkPolicy coverage check
 - `scripts/` — load-test and failure-injection scripts for the defense demo
+- `sample-app-master/` — original Laravel + MySQL application source, previously deployed via `docker-compose.yaml`; this is what the Helm chart in `crementation/` packages for Kubernetes
+
+## Architecture
+
+Four AWS EC2 (Amazon Linux) VMs, per the KubeQuest lab environment:
+
+| Node         | Role                                              |
+|--------------|----------------------------------------------------|
+| `kube-1`     | Kubernetes control plane + worker                  |
+| `kube-2`     | Kubernetes worker                                   |
+| `ingress`    | Runs the ingress-nginx controller (DaemonSet, hostNetwork on 80/443) |
+| `monitoring` | Runs Prometheus, Grafana, Loki, Alloy, Vault        |
+
+Nodes are labelled to pin workloads:
+- `node-role.kubernetes.io/ingress: ingress` on the `ingress` node
+- `node-role.kubernetes.io/monitoring: monitoring` on the `monitoring` node
+
+Application and platform pods (crementation app, MySQL, Dex, Gatekeeper,
+External Secrets) are scheduled across `kube-1`/`kube-2` by the default
+scheduler, using pod anti-affinity to spread replicas across the two.
+
+### Namespaces
+
+| Namespace                | Contents                                              |
+|---------------------------|--------------------------------------------------------|
+| `crementation`             | The app (Deployment, Service, Ingress, HPA), MySQL (primary + 2 secondaries), MySQL backup CronJob |
+| `ingress-nginx`             | ingress-nginx controller                               |
+| `dashboard`                 | kubernetes-dashboard                                    |
+| `monitoring`                | kube-prometheus-stack (Prometheus, Grafana, Alertmanager, kube-rbac-proxy sidecars), Loki, Alloy |
+| `vault`                     | HashiCorp Vault (single-node, Raft storage)             |
+| `external-secrets-system`   | External Secrets Operator                               |
+| `auth`                      | Dex (OIDC provider, GitHub org connector), oauth2-proxy (enforces login on dashboard/Grafana/ArgoCD ingresses) |
+| `gatekeeper-system`         | OPA Gatekeeper (policy: reject `:latest` image tags)     |
+| `cert-manager`              | cert-manager (internal-ca + letsencrypt-prod ClusterIssuers) |
+| `argocd`                    | ArgoCD (optional GitOps auto-sync, see below)            |
+
+### Data flow
+
+```
+Internet
+  |
+  v
+ingress node (nginx-ingress, hostNetwork:80/443)
+  |
+  +--> crementation.local  -> crementation app Service -> crementation Deployment (2+ pods, kube-1/kube-2)
+  |                                                              |
+  |                                                              v
+  |                                                     mysql-primary (writes) / mysql-read (reads)
+  |
+  +--> dashboard.local -> [auth-url/auth-signin check] -> oauth2-proxy -> kubernetes-dashboard
+  |
+  +--> grafana.local   -> [auth-url/auth-signin check] -> oauth2-proxy -> Grafana (monitoring node)
+  |
+  +--> argocd.local    -> [auth-url/auth-signin check] -> oauth2-proxy -> ArgoCD server
+
+All ingress hostnames terminate TLS at ingress-nginx via cert-manager
+(internal-ca ClusterIssuer today; swap to letsencrypt-prod once served from a
+real domain — see infrastructure/cert-manager/cluster-issuers.yaml).
+
+oauth2-proxy delegates login to Dex (OIDC issuer, GitHub org connector); a
+request that fails the ingress-nginx auth-url check is redirected to
+oauth2-proxy's /oauth2/start, which redirects to Dex, which redirects to
+GitHub. ingress-nginx re-checks auth-url on every request.
+
+Direct PromQL/Alertmanager API access (bypassing Grafana) goes through a
+second, narrower gate: kube-rbac-proxy sidecars in front of Prometheus and
+Alertmanager, authorizing via Kubernetes RBAC (SubjectAccessReview) instead
+of Dex.
+
+Every namespace above also has a deny-by-default NetworkPolicy
+(infrastructure/network-policies/) restricting pod-to-pod traffic to only the
+paths drawn in this diagram.
+
+Secrets flow: Vault (monitoring node) --> External Secrets Operator --> Kubernetes Secrets
+  (laravel-db, mysql-secret, dex-secrets) --> consumed via envFrom by the relevant pods
+  (dex-secrets is also read directly by oauth2-proxy for its client + cookie secrets)
+
+GitOps flow (optional): git push to main --> ArgoCD detects the change -->
+  auto-syncs infrastructure/, applications/mysql/, applications/crementation/,
+  backups/mysql/ --> cluster converges without a manual kubectl/kustomize/helm apply.
+```
+
+### Why these choices
+
+- **kustomize `helmCharts` inflator** instead of committing rendered/`helm get manifest` YAML: every component has exactly one editable source (its `values.yaml`), so `kubectl diff`/`kustomize build` never drifts from what's actually deployed.
+- **DaemonSet + hostNetwork for ingress-nginx**: this lab cluster has no cloud LoadBalancer in front of it, so the ingress controller binds host ports directly on the dedicated `ingress` node.
+- **Vault single-node with Raft storage, no auto-unseal**: full HA + auto-unseal needs a cloud KMS this lab account doesn't have. Traded off for a documented manual unseal step (see Deployment below) instead of a dev-mode Pod with a hardcoded root token.
+- **MySQL via the official Bitnami chart in `replication` mode** (1 primary + 2 secondaries) satisfies both the brief's "use the official chart for the database" requirement and its redundancy requirement.
+- **cert-manager with a self-signed internal-ca ClusterIssuer** (not just Let's Encrypt): Let's Encrypt's HTTP-01 challenge needs a real public DNS record pointing at the ingress node, which a `.local` hostname can never satisfy. The internal CA gets TLS actually running end-to-end today; switching to `letsencrypt-prod` is a one-line annotation change once a real domain exists.
+- **kube-rbac-proxy in front of Prometheus/Alertmanager, on top of (not instead of) oauth2-proxy/Dex on Grafana**: two independent gates for two independent audiences — Grafana users go through Dex/GitHub org membership, while anyone querying PromQL directly needs a Kubernetes RBAC grant.
+- **ArgoCD as an optional layer over the manual `kubectl`/`kustomize`/`helm` flow, not a replacement for it**: every Application it manages points at the exact same paths documented manually below, so the underlying manifests never depend on ArgoCD being present.
+
+## Deployment
+
+Assumes a fresh cluster with `kube-1` as control plane, `kube-2` joined as a
+worker, and `ingress`/`monitoring` labelled per the Architecture section above:
+
+```sh
+kubectl label node <ingress-node-name> node-role.kubernetes.io/ingress=ingress
+kubectl label node <monitoring-node-name> node-role.kubernetes.io/monitoring=monitoring
+```
+
+Tools required on the machine you run these commands from: `kubectl`, `helm`,
+`kustomize` >= v5 (for `--enable-helm`).
+
+### 1. Namespaces
+
+```sh
+for ns in crementation ingress-nginx dashboard monitoring vault external-secrets-system auth gatekeeper-system cert-manager argocd; do
+  kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+done
+```
+
+Docker Hub pull secret for `maxi2/crementation-app` (private repo — this is a
+real credential, create it imperatively, never commit it):
+
+```sh
+kubectl create secret docker-registry dockerhub-secret -n crementation \
+  --docker-username=<user> --docker-password=<token> --docker-server=https://index.docker.io/v1/
+```
+
+### 2. Vault (must come before anything that reads secrets)
+
+```sh
+helm install vault hashicorp/vault -n vault -f infrastructure/vault/values.yaml
+
+kubectl -n vault exec -it vault-0 -- vault operator init -key-shares=1 -key-threshold=1 \
+  > vault-init.txt   # DO NOT COMMIT vault-init.txt — it holds the unseal key + root token
+
+kubectl -n vault exec -it vault-0 -- vault operator unseal <unseal-key-from-vault-init.txt>
+```
+
+Then, using the root token from `vault-init.txt` (one-time, to bootstrap a
+least-privilege token for External Secrets Operator — do not use the root
+token anywhere else):
+
+```sh
+kubectl -n vault exec -it vault-0 -- vault login <root-token>
+kubectl -n vault exec -it vault-0 -- vault secrets enable -path=secret kv-v2
+kubectl -n vault exec -it vault-0 -- vault policy write external-secrets-read - <<'EOF'
+path "secret/data/*" {
+  capabilities = ["read"]
+}
+EOF
+kubectl -n vault exec -it vault-0 -- vault token create -policy=external-secrets-read -format=json \
+  | jq -r '.auth.client_token' > vault-token.txt
+
+kubectl create secret generic vault-token -n external-secrets-system \
+  --from-file=token=vault-token.txt
+rm vault-init.txt vault-token.txt   # keep these out of the repo and out of shell history
+```
+
+Seed the app/Dex secrets (adjust values for your environment):
+
+```sh
+kubectl -n vault exec -it vault-0 -- vault kv put secret/secret \
+  DB_HOST=mysql-primary.crementation.svc.cluster.local \
+  DB_DATABASE=app_database \
+  DB_USERNAME=app_user \
+  DB_PASSWORD=<generate-a-real-password> \
+  DB_ROOT_PASSWORD=<generate-a-real-password> \
+  APP_KEY=<php artisan key:generate --show output>
+
+kubectl -n vault exec -it vault-0 -- vault kv put secret/dex \
+  OAUTH2_PROXY_CLIENT_SECRET=<generate-a-real-secret> \
+  OAUTH2_PROXY_COOKIE_SECRET=<openssl rand -base64 32 | head -c 32> \
+  GITHUB_CLIENT_ID=<from GitHub OAuth app settings> \
+  GITHUB_CLIENT_SECRET=<from GitHub OAuth app settings>
+```
+
+### 3. Rest of the infrastructure layer
+
+`infrastructure/kustomization.yaml`'s last resource is `network-policies`,
+which is deny-by-default per namespace — applying it now, before any pod
+exists, would strand every subsequent install. Comment that one line out for
+this step, then restore it for step 7 once everything is actually running:
+
+```sh
+sed -i.bak '/- network-policies/s/^/# /' infrastructure/kustomization.yaml
+
+kustomize build --enable-helm infrastructure | kubectl apply -f -
+```
+
+This installs cert-manager, ingress-nginx, kubernetes-dashboard,
+kube-prometheus-stack, Loki + Alloy, External Secrets Operator, Dex,
+oauth2-proxy, ArgoCD, and Gatekeeper (policy + controller). Re-run if some
+resources fail on the first pass — CRDs from one chart (cert-manager,
+Gatekeeper, Prometheus Operator) need to exist before dependent resources in
+the same apply can be created, and oauth2-proxy's ingress annotations on
+dashboard/grafana will 503 until oauth2-proxy itself is up.
+
+Confirm auth is actually enforced before moving on:
+
+```sh
+curl -skI -H "Host: dashboard.local" https://<ingress-node-public-ip>/ | head -1
+# expect: HTTP/1.1 302 Found  (redirected to oauth2-proxy's /oauth2/start, not 200)
+# -k because internal-ca is self-signed — browsers will warn too, that's
+# expected until you switch to letsencrypt-prod with a real domain
+```
+
+### 4. Database
+
+```sh
+kustomize build --enable-helm applications/mysql | kubectl apply -f -
+```
+
+Wait for `mysql-primary-0` and both `mysql-secondary-*` pods to be `Running`
+before continuing — the app's readiness probe does not wait for the DB.
+
+### 5. Application
+
+```sh
+kustomize build --enable-helm applications/crementation/base | kubectl apply -f -
+```
+
+Verify:
+
+```sh
+kubectl -n crementation get pods,svc,ingress,hpa
+kubectl -n crementation logs deploy/crementation --tail=50
+curl -H "Host: crementation.local" http://<ingress-node-public-ip>/
+```
+
+### 6. Backups
+
+```sh
+kubectl apply -k backups/mysql
+kubectl -n crementation get cronjob mysql-backup
+```
+
+Trigger one manually to confirm it works before relying on the schedule:
+
+```sh
+kubectl -n crementation create job --from=cronjob/mysql-backup mysql-backup-manual-test
+```
+
+### 7. Network policies
+
+Now that every pod from steps 3-6 is up, restore the line commented out in
+step 3 and apply the deny-by-default NetworkPolicies:
+
+```sh
+mv infrastructure/kustomization.yaml.bak infrastructure/kustomization.yaml
+
+kustomize build --enable-helm infrastructure | kubectl apply -f -
+```
+
+Re-verify auth and app connectivity still work after this — a NetworkPolicy
+typo here silently breaks traffic instead of erroring loudly:
+
+```sh
+curl -skI -H "Host: crementation.local" https://<ingress-node-public-ip>/ | head -1
+curl -skI -H "Host: dashboard.local" https://<ingress-node-public-ip>/ | head -1
+kubectl -n crementation logs deploy/crementation --tail=20  # confirm no new DB connection errors
+```
+
+If External Secrets Operator stops reconciling after this step: several pods
+(external-secrets, Dex, cert-manager, Gatekeeper) need to reach the
+Kubernetes API server directly, not just DNS/other pods. The API server's
+ClusterIP is cluster-specific and not hardcoded in these policies — most
+CNIs (Calico, used here) implicitly permit apiserver traffic regardless of
+NetworkPolicy, but verify this on your cluster; the fix is a per-namespace
+`ipBlock` egress rule using `kubectl get svc kubernetes -n default -o
+jsonpath='{.spec.clusterIP}'`.
+
+### Redeploying after a change
+
+Edit the relevant `values.yaml` (chart-level config) or
+`crementation/values.yaml` / `crementation/templates/*` (app-level config),
+then re-run the matching `kustomize build --enable-helm <path> | kubectl
+apply -f -` command above. Do not hand-edit live cluster objects — if you do,
+port the change back into the source file immediately.
+
+## ArgoCD (optional GitOps auto-sync)
+
+Per the brief's bonus list ("argoCD to manage your components and GitOps
+repositories"). Turns the manual `kustomize build --enable-helm <path> |
+kubectl apply -f -` workflow above into: push to `main`, cluster updates
+itself within ~3 minutes (default sync interval).
+
+Four `Application` resources (`infrastructure/argocd/argocd-apps.yaml`), each
+watching one path in this repo and auto-syncing (`prune: true`, `selfHeal:
+true` — drift and manual `kubectl edit` both get reverted automatically):
+
+| Application | Watches | Deploys |
+|---|---|---|
+| `infrastructure` | `infrastructure/` | cert-manager, ingress-nginx, dashboard, kube-prometheus-stack, Loki+Alloy, Vault, ESO, Dex, oauth2-proxy, Gatekeeper, NetworkPolicies |
+| `mysql` | `applications/mysql/` | the official Bitnami MySQL chart |
+| `crementation` | `applications/crementation/overlays/prod/` | the app |
+| `mysql-backups` | `backups/mysql/` | the backup CronJob + PVC |
+
+ArgoCD can't GitOps-manage its own installation before it exists — it's
+installed the same way as everything else in step 3 above (just another
+`helmChart` entry in `infrastructure/kustomization.yaml`). Bootstrap the
+Application manifests once, manually, right after step 3:
+
+```sh
+kubectl apply -f infrastructure/argocd/argocd-apps.yaml
+```
+
+From this point on, further changes to `infrastructure/`,
+`applications/mysql/`, `applications/crementation/`, or `backups/mysql/` in
+git are picked up automatically.
+
+**NetworkPolicy ordering hazard under ArgoCD:** the manual step-3 workaround
+(commenting out `network-policies`) does not apply once ArgoCD owns the sync
+— the `infrastructure` Application syncs everything, NetworkPolicies
+included, as one unit, in the same initial sync that creates the pods those
+policies gate. This is usually fine (Kubernetes NetworkPolicy enforcement is
+asynchronous relative to object creation, so the target pods are typically up
+by the time the CNI programs the policy), but it's a genuine race. If the
+first ArgoCD sync of `infrastructure` leaves anything stuck:
+
+1. `kubectl -n argocd patch application infrastructure --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'` (pause auto-sync)
+2. Manually delete the `network-policies` resources that landed too early
+3. Let the rest settle, confirm everything's `Running`
+4. Re-apply NetworkPolicies (`kubectl apply -k infrastructure/network-policies`)
+5. Re-enable auto-sync (re-apply `infrastructure/argocd/argocd-apps.yaml`)
+
+To fall back to manual `kubectl`/`kustomize`/`helm` (defense day fallback):
+pause auto-sync on every Application (`kubectl -n argocd get applications -o
+name | xargs -I{} kubectl -n argocd patch {} --type merge -p
+'{"spec":{"syncPolicy":{"automated":null}}}'`) — nothing about the manifests
+depends on ArgoCD being present.
+
+## CI/CD
+
+`.github/workflows/ci.yml` runs on every push to `main`, `develop`, and any
+`kubequest-*` branch, plus every PR into `main`/`develop`. Three parallel jobs:
+
+1. **`build-and-scan-image`** — builds the `crementation` app image from
+   `sample-app-master/Dockerfile` (scan-only, not pushed anywhere), scans it
+   with [Trivy](https://trivy.dev/) for CRITICAL/HIGH CVEs. Findings upload
+   as SARIF to the repo's Security tab. Does not currently fail the build —
+   the base image (`php:8.2-apache`) always carries some upstream CVEs
+   outside our control; the intent is visibility first.
+
+2. **`lint-manifests`** — renders every Kustomize tree this repo deploys
+   (`infrastructure/`, `applications/crementation/base/`,
+   `applications/mysql/`) via `kustomize build --enable-helm`, then runs
+   **kube-linter** (config: `.kube-linter.yaml`, three checks explicitly
+   excluded there — `host-network`, `host-port`, `run-as-non-root` — each a
+   documented accepted trade-off, see Security review below) and **`helm
+   lint`** against the `crementation/` chart source.
+
+3. **`network-policy-check`** — a repo-structure check confirming every
+   namespace that's supposed to have a deny-by-default NetworkPolicy still
+   has its file and targets the right namespace, and that
+   `infrastructure/kustomization.yaml` hasn't dropped the `network-policies`
+   line (the safety net for the step-3 comment-out workaround above never
+   accidentally landing in a commit).
+
+**What's not automated yet:** no CD/auto-deploy step (ArgoCD above is the
+separate layer for that), no image push/registry step (the Docker Hub image
+is built and pushed manually today), and no runtime NetworkPolicy
+enforcement testing against a live cluster (only that the repo declares the
+right policies, not that a running cluster enforces them correctly).
+
+## Security review
+
+Manual review of every chart's `values.yaml` in this repo (no
+`helm`/`kubesec`/`checkov`/`trivy` binaries were available when this was
+written; an automated version runs in CI, see above). Findings graded
+Critical / High / Medium / Low / Info.
+
+**Summary:** 2 Critical findings, both already fixed (a leaked GitHub OAuth
+secret that was redacted and moved to Vault; a previously-unauthenticated
+Grafana ingress that's now gated by oauth2-proxy/Dex). 3 High findings, 2
+fixed (Prometheus/Alertmanager gained kube-rbac-proxy auth; oauth2-proxy's
+`cookie-secure` flag was stale from before TLS existed, now `true`) and 1
+still open (Vault's internal listener runs with `tls_disable = true` —
+traffic is internal-cluster-only and NetworkPolicy-restricted to
+`external-secrets-system` → `vault:8200`, which limits blast radius, but the
+channel itself is unencrypted; fixing it means issuing Vault a cert via the
+new `internal-ca` issuer, not done yet). Everything else is either passing or
+an explicitly accepted trade-off appropriate for a 4-VM course lab cluster:
+
+- **crementation app runs as root** — `php:8.2-apache` binds port 80 as root
+  and chmods `storage/` at startup; fixing this needs reworking the base
+  image, out of scope for now. `allowPrivilegeEscalation: false` and all
+  capabilities dropped are set regardless.
+- **No `readOnlyRootFilesystem` on the app** — it writes to
+  `storage/`/`bootstrap/cache` at runtime (Laravel convention); would need an
+  explicit writable `emptyDir` mount first.
+- **MySQL has no explicit securityContext override** — Bitnami's chart ships
+  hardened defaults out of the box (non-root UID, dropped capabilities), not
+  independently re-verified against this exact chart version.
+- **Dex uses in-memory storage** — session/refresh-token state is lost on pod
+  restart, forcing re-login; acceptable for a lab cluster.
+- **ingress-nginx uses `hostNetwork: true`** — architectural necessity (no
+  cloud LoadBalancer on this lab cluster); blast radius is scoped to the
+  dedicated `ingress` node and NetworkPolicy restricts its egress to only the
+  namespaces it actually proxies to.
+- **letsencrypt-prod ClusterIssuer has a placeholder email** — must be
+  replaced with a real, monitored address before actually issuing certs
+  through it.
+
+## Grafana dashboards
+
+**Crementation - Logs** (`infrastructure/monitoring/dashboards/crementation-logs.json`)
+is a pre-built dashboard for the "filtre log monitoring" bonus, with a log
+volume by level panel, a filtered log stream (with `$level`/`$pod`
+dropdowns), and a raw-text error rate panel.
+
+Getting logs from the app into this dashboard at all required an app-config
+fix, not just the dashboard: Laravel's default log channel writes plain-text
+lines to a file *inside the container*, which Alloy (the log shipper, tails
+stdout/stderr only) never sees. Fixed via two plain environment variables in
+`crementation/values.yaml` — `LOG_CHANNEL=stderr` (so logs reach stdout) and
+`LOG_STDERR_FORMATTER=Monolog\Formatter\JsonFormatter` (so LogQL's `| json`
+filter can parse a `level_name` field out of them). No app code changes.
+
+The dashboard JSON is wrapped in a ConfigMap
+(`infrastructure/monitoring/dashboards/kustomization.yaml`) labeled
+`grafana_dashboard: "1"`, which kube-prometheus-stack's Grafana sidecar
+auto-imports — no manual "import dashboard" click needed.
+
+To demo: log into Grafana (`https://grafana.local`), open **Crementation -
+Logs**, trigger some errors (`./scripts/failure-demo.sh <ip> crash` a few
+times), and watch the error-rate panel spike and the filtered stream update
+live (10s refresh).
+
+## Defense day runbook
+
+Per the project brief, the defense has four parts:
+
+**1. Fresh cluster, before presenting** — spin up a new cluster (more nodes
+than the 4-VM dev environment) ahead of time, not live. Label the
+ingress/monitoring nodes as in the Architecture section, confirm `kubectl get
+nodes` shows all `Ready`.
+
+**2. Live deploy, using only kubectl / kustomize / helm** — follow the
+Deployment steps 1–6 above live, narrating each command. Nothing should
+require editing YAML on the fly.
+
+**3. Autoscaling demo** — the app's HPA (`crementation/values.yaml` →
+`autoscaling`) scales 2→5 replicas at 70% CPU:
+
+```sh
+kubectl -n crementation get hpa crementation --watch &
+./scripts/load-test.sh <ingress-node-public-ip> 3m 50
+```
+
+Narrate: CPU climbing in Grafana, HPA events firing (`kubectl -n crementation
+describe hpa crementation`), new pods scheduling onto whichever node has room
+(pod anti-affinity spreads them), Prometheus/Loki picking up new pods
+automatically. For a sharper, more deterministic version, use the CPU-burn
+debug endpoint instead (see Debug endpoints below):
+`./scripts/failure-demo.sh <ip> cpu 60`.
+
+**4. Broken deployment + automatic rollback:**
+
+```sh
+helm upgrade crementation ./crementation -n crementation --reuse-values \
+  --set image.tag=<known-broken-tag>
+
+kubectl -n crementation rollout status deploy/crementation  # hangs/fails — that's the point
+kubectl -n crementation describe pod <failing-pod>           # show the failed probe/crash reason
+
+kubectl -n crementation rollout undo deploy/crementation
+kubectl -n crementation rollout status deploy/crementation   # back to the last good revision
+```
+
+For a sharper version showing a real OOMKill instead of just a failed probe,
+use the memory-leak debug endpoint (see below):
+`./scripts/failure-demo.sh <ip> memory 80`, then watch `kubectl -n
+crementation get pods --watch` for `RESTARTS` incrementing and `Last State:
+Terminated, Reason: OOMKilled`.
+
+**Known fragile points to check the morning of:**
+- Vault starts **sealed** after the nightly VM shutdown script — unseal it
+  first (step 2 above) or every ExternalSecret is stuck on stale/no data.
+- MySQL secondaries take longer to become `Ready` than the primary — don't
+  deploy the app before both show `Running`.
+- Confirm `crementation.local` / `dashboard.local` resolve on the
+  presentation machine (`/etc/hosts` pointed at the ingress node's IP).
+
+### Debug endpoints
+
+Per the brief's suggestion to "enrich the application code with some memory
+leaks, loops consuming CPU, or anything that could lead to errors":
+`sample-app-master/app/Http/Controllers/DebugController.php` adds
+`/api/debug/burn-cpu`, `/api/debug/leak-memory`, and `/api/debug/crash`,
+gated behind `DEBUG_ENDPOINTS_ENABLED` (off by default in
+`crementation/values.yaml` — never enable in a normal deploy). `scripts/load-test.sh`
+and `scripts/failure-demo.sh` drive them for the demos above. Remember to
+flip the flag back to `false` and re-apply once done.

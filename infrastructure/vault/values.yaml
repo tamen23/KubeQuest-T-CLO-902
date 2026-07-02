@@ -5,8 +5,8 @@
 # Vault starts SEALED after every restart/reschedule. On a course cluster that
 # is shut down nightly, that means an unseal step is required each morning
 # before Vault (and therefore External Secrets Operator, and therefore Dex +
-# the app's DB credentials) will work. See docs/deployment/deployment.md for
-# the init/unseal runbook. This is an explicit trade-off: real persistent
+# the app's DB credentials) will work. See the README's "Deployment" section
+# for the init/unseal runbook. This is an explicit trade-off: real persistent
 # storage and no hardcoded root token, at the cost of a manual daily unseal
 # instead of full HA + auto-unseal (which needs a cloud KMS we don't have on
 # this lab AWS account).

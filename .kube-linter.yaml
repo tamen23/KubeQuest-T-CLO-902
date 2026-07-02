@@ -1,12 +1,12 @@
 # kube-linter config for CI (.github/workflows/ci.yml).
-# Checks disabled here are documented, accepted trade-offs — see
-# docs/SECURITY-REVIEW.md for the reasoning behind each one. Everything else
-# uses kube-linter's default check set.
+# Checks disabled here are documented, accepted trade-offs — see the
+# README's "Security review" section for the reasoning behind each one.
+# Everything else uses kube-linter's default check set.
 checks:
   doNotAutoAddDefaults: false
   exclude:
     # ingress-nginx must bind host ports 80/443 directly (no cloud LB on this
-    # lab cluster) — see docs/SECURITY-REVIEW.md's ingress-nginx section.
+    # lab cluster) — see the README's ingress-nginx security note.
     - host-network
     - host-port
 
@@ -15,5 +15,5 @@ checks:
     - run-as-non-root
 
     # Alloy (log shipper) intentionally tolerates all taints so it runs on
-    # every node, including tainted ones — see docs/SECURITY-REVIEW.md.
+    # every node, including tainted ones — see the README's security review.
     - non-existent-service-account

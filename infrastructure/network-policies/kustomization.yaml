@@ -1,6 +1,6 @@
 # Deny-by-default NetworkPolicies per namespace, allowing only the traffic
-# paths that actually exist in this cluster (see docs/ARCHITECTURE.md's data
-# flow diagram). Applied cluster-wide alongside the rest of infrastructure/.
+# paths that actually exist in this cluster (see the README's "Data flow"
+# diagram). Applied cluster-wide alongside the rest of infrastructure/.
 #
 # CAVEAT — Kubernetes API server egress: several pods here (external-secrets,
 # dex's --skip-provider-button flows, cert-manager, gatekeeper) need to reach

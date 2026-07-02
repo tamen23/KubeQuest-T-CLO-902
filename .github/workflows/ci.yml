@@ -87,8 +87,8 @@ jobs:
           kube-linter lint rendered-infrastructure.yaml rendered-crementation.yaml rendered-mysql.yaml \
             --config .kube-linter.yaml || true
           # `|| true`: report findings without hard-failing CI on every run —
-          # see docs/CI-CD.md for the plan to tighten this once the baseline
-          # findings from docs/SECURITY-REVIEW.md are fully closed out.
+          # see the README's CI/CD and Security review sections for the plan
+          # to tighten this once the baseline findings are fully closed out.
 
       - name: Helm lint (crementation chart)
         run: helm lint crementation/
