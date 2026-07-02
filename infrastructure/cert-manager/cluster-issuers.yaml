@@ -1,0 +1,63 @@
+# Two ClusterIssuers, for two different situations:
+#
+# 1. `internal-ca` — a self-signed CA generated once in-cluster, used for the
+#    `.local` hostnames (crementation.local, dashboard.local, grafana.local)
+#    that this lab cluster actually resolves to today. This is what's usable
+#    on defense day without owning a real domain: browsers will show a
+#    certificate-authority warning (self-signed root isn't trusted by
+#    default), but the ingress terminates real TLS and the mechanism —
+#    cert-manager issuing + auto-renewing certs — is fully demoable.
+#
+# 2. `letsencrypt-prod` — real publicly-trusted certs via HTTP-01 challenge.
+#    Only works once a real domain's DNS A record points at the ingress
+#    node's public IP (Let's Encrypt must be able to reach
+#    http://<domain>/.well-known/acme-challenge/... from the internet, which
+#    a .local hostname can never satisfy). Swap the ingress `hosts` values
+#    from *.local to the real domain and reference this issuer instead of
+#    internal-ca to switch over — no other change needed.
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: internal-ca-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: internal-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: kubequest-internal-ca
+  secretName: internal-ca-secret
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: internal-ca-bootstrap
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: internal-ca
+spec:
+  ca:
+    secretName: internal-ca-secret
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@example.com # replace with a real, monitored address before use
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx
