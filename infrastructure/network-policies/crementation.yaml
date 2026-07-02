@@ -1,0 +1,135 @@
+# Deny-by-default for the crementation namespace, then explicitly allow the
+# traffic paths that actually exist:
+#   ingress-nginx -> crementation app (80)
+#   crementation app -> mysql (3306)
+#   mysql backup CronJob -> mysql (3306)
+#   monitoring (prometheus) -> anything with a /metrics endpoint, for scraping
+# Every pod also needs DNS egress to kube-system, or nothing resolves.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: crementation
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: crementation
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-app
+  namespace: crementation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: crementation
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-to-mysql
+  namespace: crementation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mysql
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: crementation
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mysql-backup
+      ports:
+        - protocol: TCP
+          port: 3306
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-egress-to-mysql
+  namespace: crementation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: crementation
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mysql
+      ports:
+        - protocol: TCP
+          port: 3306
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backup-egress-to-mysql
+  namespace: crementation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mysql-backup
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mysql
+      ports:
+        - protocol: TCP
+          port: 3306
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: crementation
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring

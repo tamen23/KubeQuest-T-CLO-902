@@ -24,6 +24,13 @@ resources:
   # Must apply after the cert-manager helmChart below (CRDs + webhook need to
   # exist first) — see docs/deployment/deployment.md for the two-pass apply.
   - cert-manager/cluster-issuers.yaml
+  # NetworkPolicies are deny-by-default per namespace — they MUST be applied
+  # last, after every namespace/pod/service above already exists and
+  # namespaces carry their default kubernetes.io/metadata.name label (added
+  # automatically by Kubernetes >=1.21, which this cluster is). Applying them
+  # first or mid-bootstrap will strand pods that need to reach each other
+  # before their allow-rules exist. See docs/deployment/deployment.md.
+  - network-policies
 
 helmCharts:
   - name: cert-manager

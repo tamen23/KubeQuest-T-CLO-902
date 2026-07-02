@@ -1,0 +1,19 @@
+# Deny-by-default NetworkPolicies per namespace, allowing only the traffic
+# paths that actually exist in this cluster (see docs/ARCHITECTURE.md's data
+# flow diagram). Applied cluster-wide alongside the rest of infrastructure/.
+#
+# CAVEAT — Kubernetes API server egress: several pods here (external-secrets,
+# dex's --skip-provider-button flows, cert-manager, gatekeeper) need to reach
+# the Kubernetes API server directly (not just DNS/other pods) to do their
+# job — issuing Secrets, watching CRDs, admission review. The API server's
+# ClusterIP is cluster-specific and not hardcoded in these policies. Calico
+# (the CNI this cluster runs, per earlier live-state evidence) implicitly
+# permits apiserver traffic on most default configs regardless of
+# NetworkPolicy, but VERIFY this on your specific cluster after applying —
+# if something that talks to the apiserver stops working, that's the first
+# thing to check, and the fix is a per-namespace ipBlock egress rule using
+# `kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}'`.
+resources:
+  - crementation.yaml
+  - monitoring.yaml
+  - vault.yaml
