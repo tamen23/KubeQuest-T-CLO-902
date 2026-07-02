@@ -1,0 +1,49 @@
+# Official HashiCorp Vault Helm chart (https://github.com/hashicorp/vault-helm),
+# single-node with Raft (integrated) storage instead of the old `vault-dev`
+# in-memory Pod with a hardcoded root token.
+#
+# Vault starts SEALED after every restart/reschedule. On a course cluster that
+# is shut down nightly, that means an unseal step is required each morning
+# before Vault (and therefore External Secrets Operator, and therefore Dex +
+# the app's DB credentials) will work. See docs/deployment/deployment.md for
+# the init/unseal runbook. This is an explicit trade-off: real persistent
+# storage and no hardcoded root token, at the cost of a manual daily unseal
+# instead of full HA + auto-unseal (which needs a cloud KMS we don't have on
+# this lab AWS account).
+server:
+  ha:
+    enabled: false
+
+  dataStorage:
+    enabled: true
+    storageClass: local-path
+    size: 5Gi
+
+  standalone:
+    enabled: true
+    config: |
+      listener "tcp" {
+        address     = "[::]:8200"
+        tls_disable = true
+      }
+
+      storage "raft" {
+        path = "/vault/data"
+      }
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  nodeSelector:
+    node-role.kubernetes.io/monitoring: monitoring
+
+injector:
+  enabled: false
+
+ui:
+  enabled: true
