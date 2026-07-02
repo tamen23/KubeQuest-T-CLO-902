@@ -1,0 +1,65 @@
+# Official ArgoCD Helm chart (https://argo-cd.readthedocs.io).
+#
+# BOOTSTRAP NOTE: ArgoCD can't GitOps-manage its own installation on day one
+# — it has to exist before it can watch anything. It's installed the same way
+# as everything else in infrastructure/kustomization.yaml (a one-time
+# `kubectl apply`), but once it's up, everything AFTER it — including changes
+# to ArgoCD's own values.yaml here — flows through the Application manifests
+# in this same directory (argocd-apps.yaml), not through manual kubectl/helm
+# commands. See docs/ARGOCD.md for the full explanation and the manual-apply
+# fallback if ArgoCD itself needs to be reinstalled.
+server:
+  # Exposed through ingress-nginx, gated by oauth2-proxy/Dex, same pattern as
+  # dashboard and Grafana.
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.auth.svc.cluster.local/oauth2/auth"
+      nginx.ingress.kubernetes.io/auth-signin: "http://$host/oauth2/start?rd=$escaped_request_uri"
+      cert-manager.io/cluster-issuer: internal-ca
+      # ArgoCD's server serves gRPC-Web over the same port as HTTP; nginx
+      # needs this to proxy the CLI/API correctly, not just the web UI.
+      nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    hosts:
+      - argocd.local
+    tls:
+      - secretName: argocd-tls
+        hosts:
+          - argocd.local
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Access is gated at the ingress layer (oauth2-proxy/Dex) already; disable
+  # ArgoCD's own built-in login so there's exactly one auth path to reason
+  # about instead of two independent ones.
+  extraArgs:
+    - --insecure # TLS is terminated at ingress-nginx, not re-terminated here
+
+repoServer:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+applicationSet:
+  enabled: false # not needed at this scale — 3 Application manifests are hand-written instead
+
+notifications:
+  enabled: false
+
+dex:
+  enabled: false # this cluster already runs its own Dex (infrastructure/dex) — no need for ArgoCD's bundled copy
+
+configs:
+  params:
+    server.insecure: true

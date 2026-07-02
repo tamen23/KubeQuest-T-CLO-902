@@ -1,0 +1,95 @@
+# ArgoCD Application manifests — the GitOps auto-sync layer described in the
+# brief's bonus list. Once these exist, a `git push` to `main` is enough to
+# update the cluster; nobody needs to run `kubectl apply` / `kustomize build`
+# by hand for anything covered here (bootstrapping ArgoCD itself is the one
+# necessary exception — see values.yaml's bootstrap note).
+#
+# All three point at the same repo/branch and use kustomize build options
+# matching what docs/deployment/deployment.md already documents manually
+# (--enable-helm), so switching between "ArgoCD does it" and "I do it by
+# hand" never requires different config.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: infrastructure
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/EpitechMscProPromo2026/T-CLO-902-PAR_4.git
+    targetRevision: main
+    path: infrastructure
+    kustomize:
+      enableHelm: true
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mysql
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/EpitechMscProPromo2026/T-CLO-902-PAR_4.git
+    targetRevision: main
+    path: applications/mysql
+    kustomize:
+      enableHelm: true
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crementation
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/EpitechMscProPromo2026/T-CLO-902-PAR_4.git
+    targetRevision: main
+    path: applications/crementation/overlays/prod
+    kustomize:
+      enableHelm: true
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mysql-backups
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/EpitechMscProPromo2026/T-CLO-902-PAR_4.git
+    targetRevision: main
+    path: backups/mysql
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
