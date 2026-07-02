@@ -1,0 +1,68 @@
+# kube-rbac-proxy (see values-prometheus.yaml's prometheus/alertmanager
+# `containers` blocks), with no --resource-attributes flag set, authorizes
+# each request as a non-resource-URL SubjectAccessReview against the
+# request's own path — i.e. it asks the API server "can this identity GET
+# path /?" using the standard Kubernetes non-resource-URL RBAC rule shape
+# (`nonResourceURLs`, not `resources`). Any identity without this binding
+# gets 403 straight from kube-rbac-proxy, before the request ever reaches
+# Prometheus/Alertmanager.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-rbac-proxy-monitoring-reader
+rules:
+  - nonResourceURLs: ["*"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: grafana-kube-rbac-proxy-monitoring-reader
+subjects:
+  - kind: ServiceAccount
+    name: grafana
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: kube-rbac-proxy-monitoring-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+# Dedicated Services exposing the kube-rbac-proxy sidecar ports, since the
+# kube-prometheus-stack chart's built-in Services only expose Prometheus'/
+# Alertmanager's own ports (9090/9093), which are now `listenLocal: true`
+# and unreachable from outside the pod.
+#
+# VERIFY BEFORE RELYING ON THIS: app.kubernetes.io/name: prometheus /
+# alertmanager is the documented kube-prometheus-stack / Prometheus Operator
+# convention, but it was not confirmed against a live cluster (no kubectl/helm
+# access while writing this). Before the defense demo, run:
+#   kubectl -n monitoring get pods --show-labels | grep -E 'prometheus|alertmanager'
+# and diff against the selectors below. If they don't match, the quickest fix
+# is `kubectl get svc prometheus-operated -n monitoring -o yaml` and copy its
+# `spec.selector` here verbatim (Alertmanager's built-in Service is
+# `alertmanager-operated`).
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-kube-rbac-proxy
+  namespace: monitoring
+spec:
+  selector:
+    app.kubernetes.io/name: prometheus
+  ports:
+    - name: rbac-https
+      port: 9091
+      targetPort: rbac-https
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-kube-rbac-proxy
+  namespace: monitoring
+spec:
+  selector:
+    app.kubernetes.io/name: alertmanager
+  ports:
+    - name: rbac-https
+      port: 9094
+      targetPort: rbac-https

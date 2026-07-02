@@ -1,9 +1,44 @@
 grafana:
-  additionalDataSources:
-    - name: Loki
-      type: loki
-      url: http://loki.monitoring.svc.cluster.local:3100
-      isDefault: false
+  # Grafana authenticates to Prometheus/Alertmanager through the same
+  # kube-rbac-proxy sidecars everyone else does (see prometheus/alertmanager
+  # blocks below) — its own ServiceAccount token is the Bearer credential,
+  # granted access via infrastructure/monitoring/prometheus/rbac.yaml.
+  # $__file{...} tells Grafana to read the token fresh from the projected
+  # ServiceAccount volume on every request, so token rotation is transparent.
+  serviceAccount:
+    create: true
+    name: grafana
+    autoMount: true
+
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: https://prometheus-kube-rbac-proxy.monitoring.svc.cluster.local:9091
+          isDefault: true
+          jsonData:
+            tlsSkipVerify: true
+            httpHeaderName1: Authorization
+          secureJsonData:
+            httpHeaderValue1: "Bearer $__file{/var/run/secrets/kubernetes.io/serviceaccount/token}"
+        - name: Alertmanager
+          type: alertmanager
+          access: proxy
+          url: https://alertmanager-kube-rbac-proxy.monitoring.svc.cluster.local:9094
+          jsonData:
+            tlsSkipVerify: true
+            httpHeaderName1: Authorization
+            handleGrafanaManagedAlerts: false
+          secureJsonData:
+            httpHeaderValue1: "Bearer $__file{/var/run/secrets/kubernetes.io/serviceaccount/token}"
+        - name: Loki
+          type: loki
+          access: proxy
+          url: http://loki.monitoring.svc.cluster.local:3100
+          isDefault: false
 
   nodeSelector:
     node-role.kubernetes.io/monitoring: monitoring
@@ -40,6 +75,14 @@ grafana:
           - grafana.local
 
 prometheus:
+  # kube-rbac-proxy sidecar in front of Prometheus's own UI/API port (9090),
+  # per the brief's bonus suggestion ("multi-tenant and authentification to
+  # prometheus and loki, via kube-rbac-proxy"). Delegates authorization to
+  # the Kubernetes API's SubjectAccessReview — any identity with a valid
+  # Kubernetes token AND get/list permission on this Service can query
+  # Prometheus directly; everyone else gets 403. This is a second, narrower
+  # gate than oauth2-proxy/Dex (which covers Grafana): it protects direct
+  # PromQL access for people who bypass Grafana entirely.
   prometheusSpec:
     nodeSelector:
       node-role.kubernetes.io/monitoring: monitoring
@@ -64,7 +107,31 @@ prometheus:
         cpu: 1000m
         memory: 2Gi
 
+    # Prometheus itself only listens on localhost; kube-rbac-proxy is the
+    # only container whose port is actually reachable from the Service.
+    listenLocal: true
+
+    containers:
+      - name: kube-rbac-proxy
+        image: quay.io/brancz/kube-rbac-proxy:v0.18.0
+        args:
+          - --secure-listen-address=0.0.0.0:9091
+          - --upstream=http://127.0.0.1:9090/
+          - --logtostderr=true
+        ports:
+          - containerPort: 9091
+            name: rbac-https
+        resources:
+          requests:
+            cpu: 20m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+
 alertmanager:
+  # Same kube-rbac-proxy pattern as Prometheus above, in front of the
+  # Alertmanager UI/API port (9093).
   alertmanagerSpec:
     nodeSelector:
       node-role.kubernetes.io/monitoring: monitoring
@@ -86,3 +153,23 @@ alertmanager:
       limits:
         cpu: 300m
         memory: 256Mi
+
+    listenLocal: true
+
+    containers:
+      - name: kube-rbac-proxy
+        image: quay.io/brancz/kube-rbac-proxy:v0.18.0
+        args:
+          - --secure-listen-address=0.0.0.0:9094
+          - --upstream=http://127.0.0.1:9093/
+          - --logtostderr=true
+        ports:
+          - containerPort: 9094
+            name: rbac-https
+        resources:
+          requests:
+            cpu: 20m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
