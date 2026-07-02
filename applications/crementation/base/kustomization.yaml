@@ -1,6 +1,18 @@
-resources:
-- deployment.yaml
-- service.yaml
-- ingress.yaml
-- serviceaccount.yaml
-- hpa.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: crementation
+
+# Renders the crementation/ Helm chart in-place with kustomize's built-in Helm
+# inflator, instead of vendoring a static `helm template`/`helm get manifest`
+# dump. This is the single source of truth: edit crementation/values.yaml (or
+# add a values override in an overlay) and the rendered manifests follow.
+#
+# Build with:
+#   kustomize build --enable-helm applications/crementation/base
+helmCharts:
+  - name: crementation
+    releaseName: crementation
+    namespace: crementation
+    chartHome: ../../../crementation
+    valuesFile: ../../../crementation/values.yaml
