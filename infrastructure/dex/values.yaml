@@ -36,6 +36,7 @@ config:
         - http://oauth2-proxy.auth.svc.cluster.local/oauth2/callback
         - https://dashboard.local/oauth2/callback
         - https://grafana.local/oauth2/callback
+        - https://argocd.local/oauth2/callback
 
   connectors:
     - type: github

@@ -21,3 +21,4 @@ resources:
   - external-secrets-system.yaml
   - ingress-nginx.yaml
   - dashboard.yaml
+  - argocd.yaml
