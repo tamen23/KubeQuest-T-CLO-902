@@ -1,0 +1,57 @@
+# Official oauth2-proxy Helm chart (https://oauth2-proxy.github.io/manifests).
+# One shared instance, used by ingress-nginx's auth-url/auth-signin
+# annotations on every protected ingress (dashboard.local, grafana.local — see
+# infrastructure/dashboard/values.yaml and
+# infrastructure/monitoring/prometheus/values-prometheus.yaml). This is what
+# actually enforces login; Dex alone (infrastructure/dex) only issues tokens,
+# it does not gate any traffic by itself.
+#
+# Client secret / cookie secret come from the dex-secrets Kubernetes Secret
+# (infrastructure/dex/external-secret.yaml), populated by External Secrets
+# Operator from Vault at path secret/dex — same source Dex itself reads from,
+# so the two are always in sync.
+config:
+  clientID: oauth2-proxy
+  existingSecret: dex-secrets
+
+extraArgs:
+  provider: oidc
+  oidc-issuer-url: http://dex.auth.svc.cluster.local:5556
+  redirect-url: http://oauth2-proxy.auth.svc.cluster.local/oauth2/callback
+  email-domain: "*"
+  reverse-proxy: true
+  cookie-secure: "false" # lab cluster is plain HTTP; set true once TLS is added
+  cookie-domain: .local
+  whitelist-domain: .local
+  set-authorization-header: true
+  set-xauthrequest: true
+  skip-provider-button: true
+  http-address: "0.0.0.0:4180"
+
+# client-secret and cookie-secret env vars, sourced from dex-secrets so
+# nothing is duplicated or hardcoded here.
+extraEnv:
+  - name: OAUTH2_PROXY_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: dex-secrets
+        key: OAUTH2_PROXY_CLIENT_SECRET
+  - name: OAUTH2_PROXY_COOKIE_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: dex-secrets
+        key: OAUTH2_PROXY_COOKIE_SECRET
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  portNumber: 80

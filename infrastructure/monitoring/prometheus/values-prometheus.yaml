@@ -1,4 +1,10 @@
 grafana:
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.monitoring.svc.cluster.local:3100
+      isDefault: false
+
   nodeSelector:
     node-role.kubernetes.io/monitoring: monitoring
 
@@ -14,6 +20,19 @@ grafana:
     limits:
       cpu: 500m
       memory: 512Mi
+
+  # Exposed through ingress-nginx, gated by oauth2-proxy/Dex — see
+  # infrastructure/oauth2-proxy/values.yaml for what auth-url/auth-signin
+  # point at.
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.auth.svc.cluster.local/oauth2/auth"
+      nginx.ingress.kubernetes.io/auth-signin: "http://$host/oauth2/start?rd=$escaped_request_uri"
+    hosts:
+      - grafana.local
+    path: /
 
 prometheus:
   prometheusSpec:

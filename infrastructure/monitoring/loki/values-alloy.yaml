@@ -1,0 +1,55 @@
+# Grafana Alloy, deployed as a DaemonSet to tail container logs on every node
+# and ship them to Loki (grafana/loki chart has no bundled log shipper).
+alloy:
+  configMap:
+    content: |
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.write.default.receiver]
+      }
+
+      # SingleBinary deployment mode + gateway.enabled: false (see values-loki.yaml)
+      # means the "loki" service itself accepts writes on 3100, matching the
+      # Grafana Loki datasource URL configured in values-prometheus.yaml.
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+controller:
+  type: daemonset
+  nodeSelector: {}
+  tolerations:
+    - operator: Exists

@@ -1,0 +1,97 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Cluster-wide infrastructure/platform layer (as opposed to the `applications/`
+# tree, which holds the crementation app + its database). Renders every
+# component's official Helm chart with kustomize's built-in inflator, using
+# the values.yaml checked in next to each one, plus the two handwritten
+# Gatekeeper policy manifests.
+#
+# Components have real cross-dependencies that kustomize's flat `helmCharts`
+# list does not order for you (Vault must be unsealed before External Secrets
+# can read from it; Dex needs its ExternalSecret before it can start). See
+# docs/deployment/deployment.md for the actual apply order used at defense.
+#
+# Build with:
+#   kustomize build --enable-helm infrastructure
+
+resources:
+  - components/gatekeeper/constrainttemplate-k8sdisallowlatest.yaml
+  - components/gatekeeper/constraint-k8sdisallowlatest.yaml
+  - external-secrets/clustersecretstore.yaml
+  - external-secrets/external-secrets.yaml
+  - dex/external-secret.yaml
+
+helmCharts:
+  - name: ingress-nginx
+    repo: https://kubernetes.github.io/ingress-nginx
+    version: 4.11.3
+    releaseName: ingress-nginx
+    namespace: ingress-nginx
+    valuesFile: ingress-nginx/values.yaml
+
+  - name: kubernetes-dashboard
+    repo: https://kubernetes.github.io/dashboard
+    version: 7.10.1
+    releaseName: dashboard
+    namespace: dashboard
+    valuesFile: dashboard/values.yaml
+
+  - name: kube-prometheus-stack
+    repo: https://prometheus-community.github.io/helm-charts
+    version: 65.5.1
+    releaseName: prometheus
+    namespace: monitoring
+    valuesFile: monitoring/prometheus/values-prometheus.yaml
+
+  - name: loki
+    repo: https://grafana.github.io/helm-charts
+    version: 6.16.0
+    releaseName: loki
+    namespace: monitoring
+    valuesFile: monitoring/loki/values-loki.yaml
+
+  - name: alloy
+    repo: https://grafana.github.io/helm-charts
+    version: 0.11.0
+    releaseName: alloy
+    namespace: monitoring
+    valuesFile: monitoring/loki/values-alloy.yaml
+
+  - name: vault
+    repo: https://helm.releases.hashicorp.com
+    version: 0.28.1
+    releaseName: vault
+    namespace: vault
+    valuesFile: vault/values.yaml
+
+  - name: external-secrets
+    repo: https://charts.external-secrets.io
+    version: 0.10.4
+    releaseName: external-secrets
+    namespace: external-secrets-system
+
+  - name: dex
+    repo: https://charts.dexidp.io
+    version: 0.19.1
+    releaseName: dex
+    namespace: auth
+    valuesFile: dex/values.yaml
+
+  # Sits behind ingress-nginx's auth-url/auth-signin annotations on
+  # dashboard.local and grafana.local (see dashboard/values.yaml and
+  # monitoring/prometheus/values-prometheus.yaml) — this is what actually
+  # enforces the auth Dex only issues tokens for. Must be deployed after dex
+  # and dex/external-secret.yaml (both provide the OIDC client + secret it needs).
+  - name: oauth2-proxy
+    repo: https://oauth2-proxy.github.io/manifests
+    version: 7.9.0
+    releaseName: oauth2-proxy
+    namespace: auth
+    valuesFile: oauth2-proxy/values.yaml
+
+  - name: gatekeeper
+    repo: https://open-policy-agent.github.io/gatekeeper/charts
+    version: 3.17.1
+    releaseName: gatekeeper
+    namespace: gatekeeper-system
