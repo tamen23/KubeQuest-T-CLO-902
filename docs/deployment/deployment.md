@@ -14,7 +14,7 @@ Tools required on the machine you run these commands from: `kubectl`, `helm`,
 ## 1. Namespaces
 
 ```sh
-for ns in crementation ingress-nginx dashboard monitoring vault external-secrets-system auth gatekeeper-system; do
+for ns in crementation ingress-nginx dashboard monitoring vault external-secrets-system auth gatekeeper-system cert-manager argocd; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
 done
 ```
@@ -80,23 +80,35 @@ kubectl -n vault exec -it vault-0 -- vault kv put secret/dex \
 
 ## 3. Rest of the infrastructure layer
 
+`infrastructure/kustomization.yaml`'s last resource is `network-policies`,
+which is deny-by-default per namespace — applying it now, before any pod
+exists, would strand every subsequent install (nothing could reach anything
+else to bootstrap). Comment that one line out for this step, then restore it
+for step 7 once everything is actually running:
+
 ```sh
+sed -i.bak '/- network-policies/s/^/# /' infrastructure/kustomization.yaml
+
 kustomize build --enable-helm infrastructure | kubectl apply -f -
 ```
 
-This installs ingress-nginx, kubernetes-dashboard, kube-prometheus-stack, Loki
-+ Alloy, External Secrets Operator, Dex, oauth2-proxy, and Gatekeeper (policy
-+ controller). Re-run if some resources fail on the first pass — CRDs from one
-chart (Gatekeeper, Prometheus Operator) need to exist before dependent
-resources in the same apply can be created, and oauth2-proxy's ingress
-annotations on dashboard/grafana will 503 until oauth2-proxy itself is up.
+This installs cert-manager, ingress-nginx, kubernetes-dashboard,
+kube-prometheus-stack, Loki + Alloy, External Secrets Operator, Dex,
+oauth2-proxy, and Gatekeeper (policy + controller). Re-run if some resources
+fail on the first pass — CRDs from one chart (cert-manager, Gatekeeper,
+Prometheus Operator) need to exist before dependent resources in the same
+apply can be created, and oauth2-proxy's ingress annotations on
+dashboard/grafana will 503 until oauth2-proxy itself is up.
 
 Confirm auth is actually enforced before moving on — this is the fix for a
 gap the earlier audit caught (Dex alone, with nothing consuming it):
 
 ```sh
-curl -sI -H "Host: dashboard.local" http://<ingress-node-public-ip>/ | head -1
+curl -skI -H "Host: dashboard.local" https://<ingress-node-public-ip>/ | head -1
 # expect: HTTP/1.1 302 Found  (redirected to oauth2-proxy's /oauth2/start, not 200)
+# -k because internal-ca (infrastructure/cert-manager) is self-signed —
+# browsers will warn too, that's expected until you switch to letsencrypt-prod
+# with a real domain (see infrastructure/cert-manager/cluster-issuers.yaml)
 ```
 
 ## 4. Database
@@ -134,6 +146,40 @@ Trigger one manually to confirm it works before relying on the schedule:
 ```sh
 kubectl -n crementation create job --from=cronjob/mysql-backup mysql-backup-manual-test
 ```
+
+## 7. Network policies
+
+Now that every pod from steps 3-6 is up, restore the line commented out in
+step 3 and apply the deny-by-default NetworkPolicies:
+
+```sh
+mv infrastructure/kustomization.yaml.bak infrastructure/kustomization.yaml
+
+kustomize build --enable-helm infrastructure | kubectl apply -f -
+```
+
+Re-verify auth and app connectivity still work after this — a NetworkPolicy
+typo here silently breaks traffic instead of erroring loudly:
+
+```sh
+curl -skI -H "Host: crementation.local" https://<ingress-node-public-ip>/ | head -1
+curl -skI -H "Host: dashboard.local" https://<ingress-node-public-ip>/ | head -1
+kubectl -n crementation logs deploy/crementation --tail=20  # confirm no new DB connection errors
+```
+
+If External Secrets Operator stops reconciling after this step, see the
+caveat at the top of `infrastructure/network-policies/kustomization.yaml`
+about apiserver egress.
+
+## 8. (Optional) Switch to GitOps auto-sync with ArgoCD
+
+Steps 1-7 above are the full manual deploy. ArgoCD (installed as part of
+step 3, since it's just another `helmChart` entry in
+`infrastructure/kustomization.yaml`) can take over from here so future
+changes apply themselves on `git push` instead of needing steps 3-6 re-run by
+hand. This is optional — the manifests work either way. See `docs/ARGOCD.md`
+for the bootstrap command and an important NetworkPolicy timing caveat
+specific to letting ArgoCD (rather than you) apply step 7.
 
 ## Redeploying after a change
 
