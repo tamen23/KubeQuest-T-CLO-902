@@ -15,6 +15,11 @@ app:
       nginx.ingress.kubernetes.io/backend-protocol: HTTPS
       nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.auth.svc.cluster.local/oauth2/auth"
       nginx.ingress.kubernetes.io/auth-signin: "http://$host/oauth2/start?rd=$escaped_request_uri"
+      cert-manager.io/cluster-issuer: internal-ca
+    tls:
+      - secretName: dashboard-tls
+        hosts:
+          - dashboard.local
 
   scaling:
     replicas: 1

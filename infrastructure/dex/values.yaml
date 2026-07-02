@@ -30,10 +30,12 @@ config:
     - id: oauth2-proxy
       name: "oauth2-proxy"
       secret: $OAUTH2_PROXY_CLIENT_SECRET
+      # https:// because ingress-nginx now terminates TLS on these hosts via
+      # cert-manager (internal-ca issuer) — see infrastructure/cert-manager.
       redirectURIs:
         - http://oauth2-proxy.auth.svc.cluster.local/oauth2/callback
-        - http://dashboard.local/oauth2/callback
-        - http://grafana.local/oauth2/callback
+        - https://dashboard.local/oauth2/callback
+        - https://grafana.local/oauth2/callback
 
   connectors:
     - type: github
