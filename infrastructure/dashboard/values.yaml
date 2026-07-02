@@ -1,0 +1,46 @@
+# Official kubernetes-dashboard Helm chart
+# (https://github.com/kubernetes/dashboard, chart repo kubernetes-dashboard.github.io).
+# Exposed through ingress-nginx, gated by the auth-url/auth-signin annotations
+# below: every request is checked against oauth2-proxy
+# (infrastructure/oauth2-proxy), which itself delegates login to Dex
+# (infrastructure/dex). Without those two annotations this ingress would be
+# open to anyone who can resolve dashboard.local — do not remove them.
+app:
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - dashboard.local
+    annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+      nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.auth.svc.cluster.local/oauth2/auth"
+      nginx.ingress.kubernetes.io/auth-signin: "http://$host/oauth2/start?rd=$escaped_request_uri"
+
+  scaling:
+    replicas: 1
+
+api:
+  containers:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 300m
+        memory: 256Mi
+
+web:
+  containers:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+# RBAC: read-only cluster-viewer role by default, so anyone who authenticates
+# via Dex can look but not touch. Break-glass admin access should go through
+# `kubectl` with a personal kubeconfig, not the dashboard.
+metricsScraper:
+  enabled: true

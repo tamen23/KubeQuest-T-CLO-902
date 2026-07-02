@@ -1,0 +1,35 @@
+# Official ingress-nginx Helm chart (https://kubernetes.github.io/ingress-nginx).
+# Pinned to the dedicated `ingress` node (see project brief: 4 VMs are
+# kube-1, kube-2, ingress, monitoring) via hostNetwork + nodeSelector, so
+# inbound traffic on ports 80/443 lands directly on that node without needing
+# a cloud LoadBalancer (there isn't one on this bare AWS EC2 lab cluster).
+controller:
+  kind: DaemonSet
+
+  hostNetwork: true
+  hostPort:
+    enabled: true
+
+  nodeSelector:
+    node-role.kubernetes.io/ingress: ingress
+
+  tolerations:
+    - key: node-role.kubernetes.io/ingress
+      operator: Exists
+      effect: NoSchedule
+
+  service:
+    type: ClusterIP
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
