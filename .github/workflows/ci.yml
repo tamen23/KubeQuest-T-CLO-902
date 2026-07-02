@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, "kubequest-*"]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  security-events: write # required for uploading Trivy SARIF to the Security tab
+
+jobs:
+  build-and-scan-image:
+    name: Build app image + scan for CVEs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build crementation app image
+        uses: docker/build-push-action@v6
+        with:
+          context: sample-app-master
+          file: sample-app-master/Dockerfile
+          push: false
+          tags: crementation-app:ci
+          load: true
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: crementation-app:ci
+          format: sarif
+          output: trivy-image-results.sarif
+          severity: CRITICAL,HIGH
+          # Report, don't hard-fail the pipeline yet — the base image
+          # (php:8.2-apache) will always carry some upstream CVEs outside our
+          # control. Findings are still visible in the Security tab / job
+          # summary below, so nothing is silently swallowed.
+          exit-code: "0"
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-image-results.sarif
+
+      - name: Human-readable summary
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: crementation-app:ci
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+  lint-manifests:
+    name: Lint Kubernetes manifests + Helm charts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+
+      - name: Render infrastructure/ (helmCharts inflator)
+        run: kustomize build --enable-helm infrastructure > rendered-infrastructure.yaml
+
+      - name: Render applications/crementation/base/
+        run: kustomize build --enable-helm applications/crementation/base > rendered-crementation.yaml
+
+      - name: Render applications/mysql/
+        run: kustomize build --enable-helm applications/mysql > rendered-mysql.yaml
+
+      - name: Install kube-linter
+        run: |
+          curl -sSL "https://github.com/stackrox/kube-linter/releases/latest/download/kube-linter-linux.tar.gz" | tar xz
+          sudo mv kube-linter /usr/local/bin/
+
+      - name: Lint rendered manifests (kube-linter)
+        run: |
+          kube-linter lint rendered-infrastructure.yaml rendered-crementation.yaml rendered-mysql.yaml \
+            --config .kube-linter.yaml || true
+          # `|| true`: report findings without hard-failing CI on every run —
+          # see docs/CI-CD.md for the plan to tighten this once the baseline
+          # findings from docs/SECURITY-REVIEW.md are fully closed out.
+
+      - name: Helm lint (crementation chart)
+        run: helm lint crementation/
+
+  network-policy-check:
+    name: Validate NetworkPolicy coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Checks the source files directly rather than kustomize-rendered
+      # multi-doc YAML — parsing rendered output line-by-line with grep is
+      # fragile against field reordering; the source layout (one file per
+      # namespace, named after it) is a much more reliable signal.
+      - name: Confirm a NetworkPolicy file exists per namespace
+        run: |
+          missing=0
+          for ns in crementation monitoring auth vault external-secrets-system ingress-nginx dashboard argocd; do
+            if [ ! -f "infrastructure/network-policies/${ns}.yaml" ]; then
+              echo "::error::no infrastructure/network-policies/${ns}.yaml found for namespace $ns"
+              missing=1
+            elif ! grep -q "namespace: ${ns}$" "infrastructure/network-policies/${ns}.yaml"; then
+              echo "::error::infrastructure/network-policies/${ns}.yaml doesn't target namespace $ns"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Confirm infrastructure/kustomization.yaml still references network-policies
+        run: grep -q "network-policies" infrastructure/kustomization.yaml || \
+          (echo "::error::network-policies missing from infrastructure/kustomization.yaml resources" && exit 1)
