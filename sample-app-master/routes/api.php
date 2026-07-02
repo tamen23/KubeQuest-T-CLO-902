@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\CounterController;
+use App\Http\Controllers\DebugController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -18,3 +19,13 @@ use Illuminate\Support\Facades\Route;
 
 $router->get('counter/add', [CounterController::class, 'add']);
 $router->get('counter/count', [CounterController::class, 'get']);
+
+// Deliberate failure-injection endpoints for the defense demo (see
+// docs/deployment/defense.md and app/Http/Controllers/DebugController.php).
+// Off by default — only registered when DEBUG_ENDPOINTS_ENABLED=true is set,
+// which crementation/values.yaml does NOT set for normal deployments.
+if (env('DEBUG_ENDPOINTS_ENABLED', false)) {
+    $router->get('debug/burn-cpu', [DebugController::class, 'burnCpu']);
+    $router->get('debug/leak-memory', [DebugController::class, 'leakMemory']);
+    $router->get('debug/crash', [DebugController::class, 'crash']);
+}

@@ -35,6 +35,12 @@ env:
     value: stderr
   - name: LOG_STDERR_FORMATTER
     value: "Monolog\\Formatter\\JsonFormatter"
+  # Off by default — only flip to "true" for the defense demo's failure
+  # scripts (docs/deployment/defense.md), never in a normal deploy. Enables
+  # /api/debug/burn-cpu, /api/debug/leak-memory, /api/debug/crash
+  # (sample-app-master/app/Http/Controllers/DebugController.php).
+  - name: DEBUG_ENDPOINTS_ENABLED
+    value: "false"
 
 nameOverride: ""
 fullnameOverride: ""
