@@ -17,3 +17,7 @@ resources:
   - crementation.yaml
   - monitoring.yaml
   - vault.yaml
+  - auth.yaml
+  - external-secrets-system.yaml
+  - ingress-nginx.yaml
+  - dashboard.yaml
