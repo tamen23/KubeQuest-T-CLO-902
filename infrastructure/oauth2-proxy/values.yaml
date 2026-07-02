@@ -20,7 +20,7 @@ extraArgs:
   redirect-url: http://oauth2-proxy.auth.svc.cluster.local/oauth2/callback
   email-domain: "*"
   reverse-proxy: true
-  cookie-secure: "false" # lab cluster is plain HTTP; set true once TLS is added
+  cookie-secure: "true" # dashboard.local/grafana.local now serve TLS via cert-manager (infrastructure/cert-manager)
   cookie-domain: .local
   whitelist-domain: .local
   set-authorization-header: true
