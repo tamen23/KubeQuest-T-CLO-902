@@ -1,3 +1,15 @@
+# Secrets (oauth2-proxy static-client secret, GitHub OAuth clientID/clientSecret)
+# are NOT stored here. They are loaded from the `dex-secrets` Kubernetes Secret
+# (see infrastructure/dex/external-secret.yaml), which External Secrets Operator
+# populates from Vault at path secret/dex. Dex expands $VAR references in its
+# config file against its own process environment (os.ExpandEnv), so mounting
+# dex-secrets via envFrom is enough to fill in the values below.
+#
+# See docs/deployment/deployment.md for the full secret-bootstrap procedure.
+envFrom:
+  - secretRef:
+      name: dex-secrets
+
 config:
   issuer: http://dex.auth.svc.cluster.local:5556
 
@@ -9,20 +21,27 @@ config:
 
   enablePasswordDB: false
 
+  # oauth2-proxy runs as a single shared instance (infrastructure/oauth2-proxy)
+  # sitting behind ingress-nginx's auth-url/auth-signin annotations on every
+  # protected host (dashboard.local, grafana via values-prometheus.yaml), so
+  # one static client with one canonical redirect URI is enough — oauth2-proxy
+  # itself tracks which host the user came from and returns them there.
   staticClients:
     - id: oauth2-proxy
       name: "oauth2-proxy"
-      secret: WEtFXLmTk5v7RUgMKGaoE6IBwj35c/3EReJc2dJnX7Q=
+      secret: $OAUTH2_PROXY_CLIENT_SECRET
       redirectURIs:
-        - http://laravel.local/oauth2/callback
+        - http://oauth2-proxy.auth.svc.cluster.local/oauth2/callback
+        - http://dashboard.local/oauth2/callback
+        - http://grafana.local/oauth2/callback
 
   connectors:
     - type: github
       id: github
       name: GitHub
       config:
-        clientID: Ov23li732Qnk3366l1IN
-        clientSecret: 7784baec4762d62220250e9c27f8ebce7c8b8209
+        clientID: $GITHUB_CLIENT_ID
+        clientSecret: $GITHUB_CLIENT_SECRET
         redirectURI: http://dex.auth.svc.cluster.local:5556/callback
         orgs:
           - name: maxiboole2
