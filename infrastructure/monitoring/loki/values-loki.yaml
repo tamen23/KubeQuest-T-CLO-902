@@ -3,6 +3,33 @@ deploymentMode: SingleBinary
 loki:
   auth_enabled: false
 
+  # Loki 6.x requires an explicit storage backend + schema even in
+  # single-binary mode — without these the chart template hits a nil pointer
+  # on storage.bucketNames.chunks. Filesystem storage on the persistent
+  # volume below is the right choice for a single-node lab deployment.
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+
+# Chart 6.x's memcached-based chunk/results caches are overkill for a
+# single-node lab — disable them so the only heavy Loki workloads are the
+# single binary + the lightweight canary. (The canary must stay enabled: the
+# chart's validate.yaml template hard-fails the render if it's off.)
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
 singleBinary:
   replicas: 1
 
