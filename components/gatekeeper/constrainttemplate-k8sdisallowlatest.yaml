@@ -16,8 +16,52 @@ spec:
       rego: |
         package k8sdisallowlatest
 
+        # Collect containers from both bare Pods (spec.containers) and workload
+        # controllers that carry a pod template (Deployment/StatefulSet/DaemonSet/
+        # ReplicaSet/Job -> spec.template.spec.containers, CronJob ->
+        # spec.jobTemplate.spec.template.spec.containers). Also covers
+        # initContainers in each shape. Gatekeeper admits controllers by their
+        # own object, not the Pod they eventually create, so matching only
+        # spec.containers (the previous version) silently skipped every real
+        # workload in this repo.
+
+        input_containers[c] {
+          c := input.review.object.spec.containers[_]
+        }
+        input_containers[c] {
+          c := input.review.object.spec.initContainers[_]
+        }
+        input_containers[c] {
+          c := input.review.object.spec.template.spec.containers[_]
+        }
+        input_containers[c] {
+          c := input.review.object.spec.template.spec.initContainers[_]
+        }
+        input_containers[c] {
+          c := input.review.object.spec.jobTemplate.spec.template.spec.containers[_]
+        }
+        input_containers[c] {
+          c := input.review.object.spec.jobTemplate.spec.template.spec.initContainers[_]
+        }
+
+        # Explicit :latest tag.
         violation[{"msg": msg}] {
-          container := input.review.object.spec.containers[_]
-          endswith(container.image, ":latest")
-          msg := sprintf("image '%v' uses forbidden tag latest", [container.image])
+          c := input_containers[_]
+          endswith(c.image, ":latest")
+          msg := sprintf("image '%v' uses forbidden tag latest", [c.image])
+        }
+
+        # No tag at all -> Docker defaults it to :latest, so forbid it too.
+        # (An image ref with no ":" after the final "/" segment is untagged;
+        # a digest ref "@sha256:..." is allowed.)
+        violation[{"msg": msg}] {
+          c := input_containers[_]
+          not contains(last_segment(c.image), ":")
+          not contains(c.image, "@sha256:")
+          msg := sprintf("image '%v' has no tag (defaults to :latest); pin an explicit version", [c.image])
+        }
+
+        last_segment(image) = seg {
+          parts := split(image, "/")
+          seg := parts[count(parts) - 1]
         }

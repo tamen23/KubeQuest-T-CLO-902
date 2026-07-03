@@ -4,6 +4,23 @@ metadata:
   name: disallow-latest-tag
 spec:
   match:
+    # Match the workload controllers actually deployed in this repo, not just
+    # bare Pods. Gatekeeper's admission webhook fires on each of these object
+    # kinds; the ConstraintTemplate rego digs into the right pod-template path
+    # for each shape.
     kinds:
       - apiGroups: [""]
         kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet"]
+      - apiGroups: ["batch"]
+        kinds: ["Job", "CronJob"]
+    # Scoped to the namespaces WE own (the app, its DB, its backups), NOT
+    # cluster-wide. Enforcing :latest against every vendored Helm chart
+    # (ingress-nginx, kube-prometheus-stack, vault, ...) would block the whole
+    # install if any of their images happened to be untagged/:latest — which
+    # we can't fully guarantee without rendering each chart. This keeps the
+    # webhook a real, enforcing gate on the workloads this repo authors while
+    # never risking the platform charts' rollout.
+    namespaces:
+      - crementation
