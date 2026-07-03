@@ -58,8 +58,10 @@ podAnnotations:
   config.linkerd.io/proxy-memory-request: "64Mi"
   config.linkerd.io/skip-outbound-ports: "3306"
 
-podLabels:
-  app.kubernetes.io/managed-by: Helm
+# app.kubernetes.io/managed-by is already emitted by _helpers.tpl's common
+# labels; setting it here too produced a duplicate YAML key that broke the
+# kustomize helm inflator. Leave empty unless you need genuinely extra labels.
+podLabels: {}
 
 # NOTE: the php:8.2-apache base image runs apache2-foreground as root to bind
 # port 80 and its entrypoint chmods storage/ at startup, so runAsNonRoot is not

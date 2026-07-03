@@ -8,11 +8,18 @@ namespace: crementation
 # dump. This is the single source of truth: edit crementation/values.yaml (or
 # add a values override in an overlay) and the rendered manifests follow.
 #
-# Build with:
-#   kustomize build --enable-helm applications/crementation/base
+# Build with (the load-restrictor flag is required because the chart lives
+# outside this base dir, at repo root):
+#   kustomize build --enable-helm --load-restrictor LoadRestrictionsNone applications/crementation/base
+#
+# chartHome is a helmGlobals field (not a per-chart one); the chart dir is
+# resolved as {chartHome}/{name} -> ../../../crementation.
+helmGlobals:
+  chartHome: ../../..
+
 helmCharts:
   - name: crementation
     releaseName: crementation
     namespace: crementation
-    chartHome: ../../../crementation
     valuesFile: ../../../crementation/values.yaml
+    skipTests: true # don't render the helm test Pod into the applied manifest set
