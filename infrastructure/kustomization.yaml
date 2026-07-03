@@ -24,6 +24,7 @@ resources:
   - external-secrets/external-secrets.yaml
   - dex/external-secret.yaml
   - monitoring/prometheus/rbac.yaml
+  - monitoring/prometheus/alert-rules.yaml
   - monitoring/dashboards
   # Must apply after the cert-manager helmChart below (CRDs + webhook need to
   # exist first) — see the README's "Deployment" section for the two-pass apply.
