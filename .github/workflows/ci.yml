@@ -69,13 +69,13 @@ jobs:
         uses: azure/setup-helm@v4
 
       - name: Render infrastructure/ (helmCharts inflator)
-        run: kustomize build --enable-helm infrastructure > rendered-infrastructure.yaml
+        run: kustomize build --enable-helm --load-restrictor LoadRestrictionsNone infrastructure > rendered-infrastructure.yaml
 
       - name: Render applications/crementation/base/
-        run: kustomize build --enable-helm applications/crementation/base > rendered-crementation.yaml
+        run: kustomize build --enable-helm --load-restrictor LoadRestrictionsNone applications/crementation/base > rendered-crementation.yaml
 
       - name: Render applications/mysql/
-        run: kustomize build --enable-helm applications/mysql > rendered-mysql.yaml
+        run: kustomize build --enable-helm --load-restrictor LoadRestrictionsNone applications/mysql > rendered-mysql.yaml
 
       - name: Install kube-linter
         run: |

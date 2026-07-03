@@ -182,6 +182,7 @@ kubectl -n vault exec -it vault-0 -- vault kv put secret/secret \
   APP_KEY=<php artisan key:generate --show output>
 
 kubectl -n vault exec -it vault-0 -- vault kv put secret/dex \
+  OAUTH2_PROXY_CLIENT_ID=oauth2-proxy \
   OAUTH2_PROXY_CLIENT_SECRET=<generate-a-real-secret> \
   OAUTH2_PROXY_COOKIE_SECRET=<openssl rand -base64 32 | head -c 32> \
   GITHUB_CLIENT_ID=<from GitHub OAuth app settings> \
@@ -198,7 +199,7 @@ this step, then restore it for step 7 once everything is actually running:
 ```sh
 sed -i.bak '/- network-policies/s/^/# /' infrastructure/kustomization.yaml
 
-kustomize build --enable-helm infrastructure | kubectl apply -f -
+kustomize build --enable-helm --load-restrictor LoadRestrictionsNone infrastructure | kubectl apply -f -
 ```
 
 This installs cert-manager, ingress-nginx, kubernetes-dashboard,
@@ -221,7 +222,7 @@ curl -skI -H "Host: dashboard.local" https://<ingress-node-public-ip>/ | head -1
 ### 4. Database
 
 ```sh
-kustomize build --enable-helm applications/mysql | kubectl apply -f -
+kustomize build --enable-helm --load-restrictor LoadRestrictionsNone applications/mysql | kubectl apply -f -
 ```
 
 Wait for `mysql-primary-0` and both `mysql-secondary-*` pods to be `Running`
@@ -230,7 +231,7 @@ before continuing — the app's readiness probe does not wait for the DB.
 ### 5. Application
 
 ```sh
-kustomize build --enable-helm applications/crementation/base | kubectl apply -f -
+kustomize build --enable-helm --load-restrictor LoadRestrictionsNone applications/crementation/base | kubectl apply -f -
 ```
 
 Verify:
@@ -262,7 +263,7 @@ step 3 and apply the deny-by-default NetworkPolicies:
 ```sh
 mv infrastructure/kustomization.yaml.bak infrastructure/kustomization.yaml
 
-kustomize build --enable-helm infrastructure | kubectl apply -f -
+kustomize build --enable-helm --load-restrictor LoadRestrictionsNone infrastructure | kubectl apply -f -
 ```
 
 Re-verify auth and app connectivity still work after this — a NetworkPolicy
