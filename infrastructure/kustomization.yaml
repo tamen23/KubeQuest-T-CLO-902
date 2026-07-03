@@ -37,6 +37,20 @@ resources:
   - network-policies
 
 helmCharts:
+  # metrics-server provides the metrics.k8s.io API that the crementation HPA
+  # and `kubectl top` need — kube-prometheus-stack does NOT provide it, so
+  # without this the autoscaling demo (README defense runbook) can't work.
+  # --kubelet-insecure-tls is required on kubeadm clusters whose kubelet serves
+  # a self-signed cert (the norm for this lab environment).
+  - name: metrics-server
+    repo: https://kubernetes-sigs.github.io/metrics-server
+    version: 3.12.2
+    releaseName: metrics-server
+    namespace: kube-system
+    valuesInline:
+      args:
+        - --kubelet-insecure-tls
+
   - name: cert-manager
     repo: https://charts.jetstack.io
     version: 1.16.2
