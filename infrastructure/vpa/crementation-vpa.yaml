@@ -1,0 +1,22 @@
+# Vertical Pod Autoscaler for the crementation app, in RECOMMENDATION-ONLY
+# mode (updateMode: "Off"). It observes actual CPU/memory usage and publishes
+# a suggested request/limit in its status, but does NOT evict or resize pods
+# — because the HorizontalPodAutoscaler already owns CPU-based scaling and the
+# two must not both act on the same resource. This gives the "both scaling
+# dimensions" story (HPA = horizontal/replicas, VPA = vertical/sizing advice)
+# without them conflicting.
+#
+# See the recommendation live with:
+#   kubectl -n crementation describe vpa crementation
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: crementation
+  namespace: crementation
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: crementation
+  updatePolicy:
+    updateMode: "Off"

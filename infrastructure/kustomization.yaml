@@ -26,6 +26,10 @@ resources:
   - monitoring/prometheus/rbac.yaml
   - monitoring/prometheus/alert-rules.yaml
   - monitoring/dashboards
+  # The VPA custom resource — needs the VPA chart's CRD (below) to exist first,
+  # so on a first apply this may need a re-run (same pattern as the other CRD-
+  # backed resources here).
+  - vpa/crementation-vpa.yaml
   # Must apply after the cert-manager helmChart below (CRDs + webhook need to
   # exist first) — see the README's "Deployment" section for the two-pass apply.
   - cert-manager/cluster-issuers.yaml
@@ -160,6 +164,23 @@ helmCharts:
     releaseName: velero
     namespace: velero
     valuesFile: velero/values.yaml
+
+  # Vertical Pod Autoscaler controller (recommender + updater + admission).
+  # Needs metrics-server (installed above). The app's VPA object runs in
+  # recommendation-only mode (see vpa/crementation-vpa.yaml) so it advises on
+  # CPU/memory sizing without fighting the HPA that already owns CPU scaling.
+  - name: vpa
+    repo: https://charts.fairwinds.com/stable
+    version: 4.12.3
+    releaseName: vpa
+    namespace: vpa
+    valuesInline:
+      recommender:
+        enabled: true
+      updater:
+        enabled: false # recommendation-only; don't auto-evict pods (HPA owns scaling)
+      admissionController:
+        enabled: false
 
   # NOTE: argocd/argocd-apps.yaml (the Application manifests ArgoCD uses to
   # watch this repo) is intentionally NOT in this resources/helmCharts list —
