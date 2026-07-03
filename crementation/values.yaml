@@ -133,6 +133,12 @@ serviceMonitor:
   releaseLabel: prometheus
   interval: 15s
 
+# Guards the app against voluntary disruptions (node drain / upgrades). See
+# scripts/drain-demo.sh for the live `kubectl drain` demonstration.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
 autoscaling:
   enabled: true
   minReplicas: 2

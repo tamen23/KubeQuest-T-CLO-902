@@ -1,0 +1,22 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "crementation.fullname" . }}
+  labels:
+    {{- include "crementation.labels" . | nindent 4 }}
+spec:
+  # Keep at least this many app pods available during voluntary disruptions
+  # (node drain, cluster upgrade). With 2+ replicas and minAvailable: 1, a
+  # `kubectl drain` on one node evicts the app pod there but blocks until a
+  # replacement is Ready elsewhere — no full outage.
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "crementation.selectorLabels" . | nindent 6 }}
+{{- end }}
