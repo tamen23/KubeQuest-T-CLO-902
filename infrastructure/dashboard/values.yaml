@@ -8,18 +8,29 @@
 app:
   ingress:
     enabled: true
-    className: nginx
+    ingressClassName: nginx
+    useDefaultIngressClass: false
+    # IMPORTANT: keep false. The chart's default annotations inject
+    # ssl-passthrough, which would make ingress-nginx forward TLS straight to
+    # the dashboard pod and BYPASS the oauth2-proxy auth-url check below —
+    # i.e. silently disable authentication. We set our own annotations
+    # explicitly instead.
+    useDefaultAnnotations: false
     hosts:
       - dashboard.local
     annotations:
       nginx.ingress.kubernetes.io/backend-protocol: HTTPS
       nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.auth.svc.cluster.local/oauth2/auth"
       nginx.ingress.kubernetes.io/auth-signin: "http://$host/oauth2/start?rd=$escaped_request_uri"
-      cert-manager.io/cluster-issuer: internal-ca
+    # cert-manager wiring uses the chart's built-in issuer block (adds the
+    # cluster-issuer annotation itself), not a hand-written annotation.
+    issuer:
+      name: internal-ca
+      scope: cluster
+    # tls here is an OBJECT {enabled, secretName}, not a list (chart schema).
     tls:
-      - secretName: dashboard-tls
-        hosts:
-          - dashboard.local
+      enabled: true
+      secretName: dashboard-tls
 
   scaling:
     replicas: 1

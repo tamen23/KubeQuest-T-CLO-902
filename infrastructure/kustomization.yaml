@@ -51,9 +51,11 @@ helmCharts:
     namespace: ingress-nginx
     valuesFile: ingress-nginx/values.yaml
 
+  # Vendored under infrastructure/charts/kubernetes-dashboard (committed) —
+  # upstream https://kubernetes.github.io/dashboard no longer serves a
+  # pullable Helm index, so no repo/version here; the inflator uses the local
+  # chart dir directly.
   - name: kubernetes-dashboard
-    repo: https://kubernetes.github.io/dashboard
-    version: 7.10.1
     releaseName: dashboard
     namespace: dashboard
     valuesFile: dashboard/values.yaml
@@ -71,6 +73,7 @@ helmCharts:
     releaseName: loki
     namespace: monitoring
     valuesFile: monitoring/loki/values-loki.yaml
+    skipTests: true # chart's helm-test asserts the canary is enabled; we disabled it
 
   - name: alloy
     repo: https://grafana.github.io/helm-charts
@@ -86,11 +89,15 @@ helmCharts:
     namespace: vault
     valuesFile: vault/values.yaml
 
+  # 0.17+ is required: earlier charts' CRDs only serve external-secrets.io
+  # v1beta1/v1alpha1, but our ClusterSecretStore/ExternalSecret manifests use
+  # apiVersion external-secrets.io/v1 (served from 0.17.0 onward).
   - name: external-secrets
     repo: https://charts.external-secrets.io
-    version: 0.10.4
+    version: 0.19.2
     releaseName: external-secrets
     namespace: external-secrets-system
+    valuesFile: external-secrets/values.yaml
 
   - name: dex
     repo: https://charts.dexidp.io

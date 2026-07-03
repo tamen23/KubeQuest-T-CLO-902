@@ -3,3 +3,9 @@ applications/mysql/secrets/*
 !applications/mysql/secrets/.gitkeep
 
 personal/
+
+# kustomize helm-inflator pull cache: ignore remotely-pulled charts (they have
+# a -<version> suffix), but KEEP the deliberately vendored kubernetes-dashboard
+# (its upstream repo no longer serves a pullable index).
+infrastructure/charts/*-[0-9]*
+applications/*/charts/
