@@ -17,9 +17,11 @@ namespace: crementation
 # Build with:
 #   kustomize build --enable-helm applications/mysql
 helmCharts:
+  # Bitnami migrated its charts to the OCI registry; the old classic HTTP repo
+  # (https://charts.bitnami.com/bitnami) no longer serves pullable 12.x tarballs.
   - name: mysql
-    repo: https://charts.bitnami.com/bitnami
-    version: 12.2.5
+    repo: oci://registry-1.docker.io/bitnamicharts
+    version: 12.2.4
     releaseName: mysql
     namespace: crementation
     valuesInline:
