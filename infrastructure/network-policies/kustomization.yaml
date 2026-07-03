@@ -13,6 +13,20 @@
 # if something that talks to the apiserver stops working, that's the first
 # thing to check, and the fix is a per-namespace ipBlock egress rule using
 # `kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}'`.
+#
+# CAVEAT 2 — ingress-nginx runs with hostNetwork: true, so traffic it forwards
+# to backends (crementation, dashboard, grafana, argocd, oauth2-proxy) arrives
+# with the INGRESS NODE'S IP as the source, NOT a pod IP in the ingress-nginx
+# namespace. The `from: namespaceSelector kubernetes.io/metadata.name:
+# ingress-nginx` rules in the files below therefore will NOT match that
+# traffic on their own — deny-by-default will drop it. Add an ipBlock for the
+# ingress node's IP/CIDR to each of those ingress-allow rules, e.g.:
+#   - from:
+#       - ipBlock:
+#           cidr: <ingress-node-ip>/32   # kubectl get node <ingress-node> -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}'
+# It's left un-hardcoded here because the node IP is cluster-specific. VERIFY
+# after applying step 7: if dashboard/grafana/argocd start returning
+# connection-refused/timeouts (not 302s), this is the cause.
 resources:
   - crementation.yaml
   - monitoring.yaml

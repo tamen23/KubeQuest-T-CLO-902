@@ -210,6 +210,16 @@ Gatekeeper, Prometheus Operator) need to exist before dependent resources in
 the same apply can be created, and oauth2-proxy's ingress annotations on
 dashboard/grafana will 503 until oauth2-proxy itself is up.
 
+> **Namespace note for dex / alloy / kubernetes-dashboard.** These three
+> charts don't stamp `metadata.namespace` on their resources (they rely on
+> `helm install -n`), and the kustomize helm inflator can't add it. The
+> namespaces are pre-created in step 1, so pipe those three through an
+> explicit `-n` if you apply them separately, e.g.
+> `... | kubectl apply -n auth -f -` for dex,
+> `-n monitoring` for alloy, `-n dashboard` for the dashboard. Every other
+> chart stamps its own namespace correctly. (ArgoCD users: set
+> `destination.namespace` on those Applications, or split them out.)
+
 Confirm auth is actually enforced before moving on:
 
 ```sh
