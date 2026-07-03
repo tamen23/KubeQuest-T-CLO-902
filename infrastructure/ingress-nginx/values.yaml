@@ -10,6 +10,12 @@ controller:
   hostPort:
     enabled: true
 
+  # With hostNetwork the pod defaults to the node's DNS (dnsPolicy: Default),
+  # which cannot resolve *.svc.cluster.local — so the auth-url annotation
+  # (http://oauth2-proxy.auth.svc.cluster.local/...) would fail and every
+  # protected host would 5xx. ClusterFirstWithHostNet gives it cluster DNS.
+  dnsPolicy: ClusterFirstWithHostNet
+
   nodeSelector:
     node-role.kubernetes.io/ingress: ingress
 
