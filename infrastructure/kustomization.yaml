@@ -16,8 +16,10 @@ kind: Kustomization
 #   kustomize build --enable-helm infrastructure
 
 resources:
-  - components/gatekeeper/constrainttemplate-k8sdisallowlatest.yaml
-  - components/gatekeeper/constraint-k8sdisallowlatest.yaml
+  # Gatekeeper policy lives at repo-root components/, outside this
+  # infrastructure/ root — referenced as a base directory (which has its own
+  # kustomization.yaml) so kustomize's default load restrictor allows it.
+  - ../components/gatekeeper
   - external-secrets/clustersecretstore.yaml
   - external-secrets/external-secrets.yaml
   - dex/external-secret.yaml
