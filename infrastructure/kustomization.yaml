@@ -151,6 +151,16 @@ helmCharts:
     releaseName: gatekeeper
     namespace: gatekeeper-system
 
+  # Full-cluster backup/restore. Needs an S3 bucket + AWS creds Secret set up
+  # first (placeholders in the values will fail a live install until filled in
+  # — see infrastructure/velero/README.md); renders fine regardless.
+  - name: velero
+    repo: https://vmware-tanzu.github.io/helm-charts
+    version: 12.1.0
+    releaseName: velero
+    namespace: velero
+    valuesFile: velero/values.yaml
+
   # NOTE: argocd/argocd-apps.yaml (the Application manifests ArgoCD uses to
   # watch this repo) is intentionally NOT in this resources/helmCharts list —
   # it can't exist before ArgoCD's own CRDs do, so it's applied manually,
