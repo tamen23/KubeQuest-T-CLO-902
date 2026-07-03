@@ -16,16 +16,22 @@ grafana:
       datasources:
         - name: Prometheus
           type: prometheus
+          uid: prometheus
           access: proxy
           url: https://prometheus-kube-rbac-proxy.monitoring.svc.cluster.local:9091
           isDefault: true
           jsonData:
             tlsSkipVerify: true
+            # GET, not the Grafana default POST: kube-rbac-proxy authorizes via
+            # a non-resource-URL SubjectAccessReview that only grants `get`, so
+            # a POST query would be 403'd.
+            httpMethod: GET
             httpHeaderName1: Authorization
           secureJsonData:
             httpHeaderValue1: "Bearer $__file{/var/run/secrets/kubernetes.io/serviceaccount/token}"
         - name: Alertmanager
           type: alertmanager
+          uid: alertmanager
           access: proxy
           url: https://alertmanager-kube-rbac-proxy.monitoring.svc.cluster.local:9094
           jsonData:
@@ -36,6 +42,7 @@ grafana:
             httpHeaderValue1: "Bearer $__file{/var/run/secrets/kubernetes.io/serviceaccount/token}"
         - name: Loki
           type: loki
+          uid: loki # referenced by the crementation-logs dashboard's panels
           access: proxy
           url: http://loki.monitoring.svc.cluster.local:3100
           isDefault: false
@@ -64,7 +71,7 @@ grafana:
     ingressClassName: nginx
     annotations:
       nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.auth.svc.cluster.local/oauth2/auth"
-      nginx.ingress.kubernetes.io/auth-signin: "http://$host/oauth2/start?rd=$escaped_request_uri"
+      nginx.ingress.kubernetes.io/auth-signin: "https://$host/oauth2/start?rd=$escaped_request_uri"
       cert-manager.io/cluster-issuer: internal-ca
     hosts:
       - grafana.local
