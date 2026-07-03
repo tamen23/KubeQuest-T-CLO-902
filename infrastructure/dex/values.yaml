@@ -10,8 +10,27 @@ envFrom:
   - secretRef:
       name: dex-secrets
 
+# Dex must be reachable from the USER'S BROWSER, not just in-cluster: OIDC
+# login redirects the browser to the issuer URL, so a *.svc.cluster.local
+# issuer can never complete a real login. It's exposed at https://dex.local
+# through ingress-nginx (TLS via cert-manager) and the issuer matches.
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: internal-ca
+  hosts:
+    - host: dex.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: dex-tls
+      hosts:
+        - dex.local
+
 config:
-  issuer: http://dex.auth.svc.cluster.local:5556
+  issuer: https://dex.local
 
   storage:
     type: memory
@@ -45,7 +64,9 @@ config:
       config:
         clientID: $GITHUB_CLIENT_ID
         clientSecret: $GITHUB_CLIENT_SECRET
-        redirectURI: http://dex.auth.svc.cluster.local:5556/callback
+        # Must equal <issuer>/callback and be registered as the Authorization
+        # callback URL in the GitHub OAuth app settings.
+        redirectURI: https://dex.local/callback
         orgs:
           - name: maxiboole2
 
