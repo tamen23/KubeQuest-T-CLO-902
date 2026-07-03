@@ -125,6 +125,14 @@ readinessProbe:
     path: /
     port: http
 
+# Scrape the app's own /metrics business metrics into Prometheus (needs the
+# Prometheus Operator CRDs from kube-prometheus-stack). releaseLabel must match
+# the kube-prometheus-stack release name so the operator selects this monitor.
+serviceMonitor:
+  enabled: true
+  releaseLabel: prometheus
+  interval: 15s
+
 autoscaling:
   enabled: true
   minReplicas: 2

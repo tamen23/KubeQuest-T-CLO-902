@@ -12,3 +12,10 @@ configMapGenerator:
     options:
       labels:
         grafana_dashboard: "1"
+  - name: crementation-app-dashboard
+    namespace: monitoring
+    files:
+      - crementation-app.json
+    options:
+      labels:
+        grafana_dashboard: "1"
