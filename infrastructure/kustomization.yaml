@@ -52,6 +52,18 @@ helmCharts:
       args:
         - --kubelet-insecure-tls
 
+  # Sealed Secrets: a SECOND secrets pattern alongside Vault + External Secrets.
+  # Where Vault/ESO pulls secrets from an external store at runtime, Sealed
+  # Secrets lets you encrypt a Secret into a SealedSecret CRD that is safe to
+  # commit to git — the controller (its private key never leaves the cluster)
+  # decrypts it back into a normal Secret in-cluster. See
+  # infrastructure/sealed-secrets/README + example-sealedsecret.yaml.
+  - name: sealed-secrets
+    repo: https://bitnami.github.io/sealed-secrets
+    version: 2.19.1
+    releaseName: sealed-secrets
+    namespace: kube-system
+
   - name: cert-manager
     repo: https://charts.jetstack.io
     version: 1.16.2
