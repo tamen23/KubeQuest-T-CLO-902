@@ -10,12 +10,13 @@ Helm/Kustomize.
 - `crementation/` — Helm chart for the app (source of truth for its manifests)
 - `applications/crementation/` — Kustomize base/overlay that renders the chart above via `kustomize build --enable-helm`
 - `applications/mysql/` — Kustomize wrapper around the official Bitnami MySQL chart
-- `infrastructure/` — cluster-wide platform components (ingress, dashboard, monitoring, logging, secrets, auth, policy), one `values.yaml` per component plus a top-level `kustomization.yaml`
+- `infrastructure/` — cluster-wide platform components (metrics-server, ingress, dashboard, monitoring, logging, secrets, auth, policy), one `values.yaml` per component plus a top-level `kustomization.yaml`
 - `infrastructure/network-policies/` — deny-by-default NetworkPolicy per namespace
 - `infrastructure/argocd/` — ArgoCD Helm values + the Application manifests it uses to watch this repo
+- `infrastructure/charts/kubernetes-dashboard/` — the dashboard chart is **vendored** here (its upstream Helm repo no longer serves a pullable index); every other chart is pulled by version at build time and the pull cache is gitignored
 - `backups/mysql/` — CronJob + PVC for nightly `mysqldump` backups
-- `components/gatekeeper/` — the OPA policy (ConstraintTemplate + Constraint) that rejects `:latest` image tags
-- `.github/workflows/ci.yml` — image build + CVE scan, manifest lint, NetworkPolicy coverage check
+- `components/gatekeeper/` — the OPA policy (ConstraintTemplate + Constraint) that rejects `:latest` image tags on `crementation`-namespace workloads
+- `.github/workflows/ci.yml` + `.kube-linter.yaml` — image build + CVE scan, manifest lint, NetworkPolicy coverage check
 - `scripts/` — load-test and failure-injection scripts for the defense demo
 - `sample-app-master/` — original Laravel + MySQL application source, previously deployed via `docker-compose.yaml`; this is what the Helm chart in `crementation/` packages for Kubernetes
 
@@ -48,10 +49,11 @@ scheduler, using pod anti-affinity to spread replicas across the two.
 | `monitoring`                | kube-prometheus-stack (Prometheus, Grafana, Alertmanager, kube-rbac-proxy sidecars), Loki, Alloy |
 | `vault`                     | HashiCorp Vault (single-node, Raft storage)             |
 | `external-secrets-system`   | External Secrets Operator                               |
-| `auth`                      | Dex (OIDC provider, GitHub org connector), oauth2-proxy (enforces login on dashboard/Grafana/ArgoCD ingresses) |
-| `gatekeeper-system`         | OPA Gatekeeper (policy: reject `:latest` image tags)     |
+| `auth`                      | Dex (OIDC provider exposed at `dex.local`, GitHub org connector), oauth2-proxy (enforces login on dashboard/Grafana/ArgoCD ingresses) |
+| `gatekeeper-system`         | OPA Gatekeeper (policy: reject `:latest` image tags on `crementation`) |
 | `cert-manager`              | cert-manager (internal-ca + letsencrypt-prod ClusterIssuers) |
 | `argocd`                    | ArgoCD (optional GitOps auto-sync, see below)            |
+| `kube-system`               | metrics-server (provides `metrics.k8s.io` for the HPA / `kubectl top`) |
 
 ### Data flow
 
@@ -76,10 +78,13 @@ All ingress hostnames terminate TLS at ingress-nginx via cert-manager
 (internal-ca ClusterIssuer today; swap to letsencrypt-prod once served from a
 real domain — see infrastructure/cert-manager/cluster-issuers.yaml).
 
-oauth2-proxy delegates login to Dex (OIDC issuer, GitHub org connector); a
-request that fails the ingress-nginx auth-url check is redirected to
-oauth2-proxy's /oauth2/start, which redirects to Dex, which redirects to
-GitHub. ingress-nginx re-checks auth-url on every request.
+oauth2-proxy delegates login to Dex; a request that fails the ingress-nginx
+auth-url check is redirected to oauth2-proxy's /oauth2/start, which redirects
+to Dex (at its own external ingress `https://dex.local` — the OIDC issuer URL
+must be browser-reachable, so Dex is exposed like the other tools), which
+redirects to GitHub. ingress-nginx re-checks auth-url on every request.
+oauth2-proxy itself talks to Dex over the in-cluster service for token/JWKS
+(see infrastructure/oauth2-proxy/values.yaml's skip-oidc-discovery config).
 
 Direct PromQL/Alertmanager API access (bypassing Grafana) goes through a
 second, narrower gate: kube-rbac-proxy sidecars in front of Prometheus and
@@ -119,8 +124,13 @@ kubectl label node <ingress-node-name> node-role.kubernetes.io/ingress=ingress
 kubectl label node <monitoring-node-name> node-role.kubernetes.io/monitoring=monitoring
 ```
 
-Tools required on the machine you run these commands from: `kubectl`, `helm`,
-`kustomize` >= v5 (for `--enable-helm`).
+Tools required on the machine you run these commands from: `kubectl`, `helm`
+(>= 3.8 for OCI chart pulls — the MySQL chart is OCI), `kustomize` >= v5.
+Every build command below uses `--enable-helm --load-restrictor
+LoadRestrictionsNone`: `--enable-helm` runs the chart inflator, and the
+load-restrictor is required because a couple of charts/values live just
+outside their kustomization root (the crementation chart, the repo-root
+gatekeeper policy).
 
 ### 1. Namespaces
 
@@ -140,8 +150,15 @@ kubectl create secret docker-registry dockerhub-secret -n crementation \
 
 ### 2. Vault (must come before anything that reads secrets)
 
+Vault is installed standalone here — before the rest of the infra layer —
+because it has to be up, initialized, unsealed and seeded before External
+Secrets can read from it. It uses the same version and values file that
+`infrastructure/kustomization.yaml` pins, so the later infra apply is a no-op
+for Vault.
+
 ```sh
-helm install vault hashicorp/vault -n vault -f infrastructure/vault/values.yaml
+helm repo add hashicorp https://helm.releases.hashicorp.com && helm repo update hashicorp
+helm install vault hashicorp/vault --version 0.28.1 -n vault -f infrastructure/vault/values.yaml
 
 kubectl -n vault exec -it vault-0 -- vault operator init -key-shares=1 -key-threshold=1 \
   > vault-init.txt   # DO NOT COMMIT vault-init.txt — it holds the unseal key + root token
@@ -189,6 +206,12 @@ kubectl -n vault exec -it vault-0 -- vault kv put secret/dex \
   GITHUB_CLIENT_SECRET=<from GitHub OAuth app settings>
 ```
 
+> In the GitHub OAuth app settings, the **Authorization callback URL** must be
+> `https://dex.local/callback` (Dex's issuer + `/callback`, matching
+> `infrastructure/dex/values.yaml`). `OAUTH2_PROXY_CLIENT_SECRET` /
+> `OAUTH2_PROXY_COOKIE_SECRET` are the oauth2-proxy static-client + cookie
+> secrets (Dex-internal, unrelated to GitHub).
+
 ### 3. Rest of the infrastructure layer
 
 `infrastructure/kustomization.yaml`'s last resource is `network-policies`,
@@ -202,13 +225,14 @@ sed -i.bak '/- network-policies/s/^/# /' infrastructure/kustomization.yaml
 kustomize build --enable-helm --load-restrictor LoadRestrictionsNone infrastructure | kubectl apply -f -
 ```
 
-This installs cert-manager, ingress-nginx, kubernetes-dashboard,
-kube-prometheus-stack, Loki + Alloy, External Secrets Operator, Dex,
-oauth2-proxy, ArgoCD, and Gatekeeper (policy + controller). Re-run if some
-resources fail on the first pass — CRDs from one chart (cert-manager,
-Gatekeeper, Prometheus Operator) need to exist before dependent resources in
-the same apply can be created, and oauth2-proxy's ingress annotations on
-dashboard/grafana will 503 until oauth2-proxy itself is up.
+This installs metrics-server, cert-manager, ingress-nginx,
+kubernetes-dashboard, kube-prometheus-stack, Loki + Alloy, External Secrets
+Operator, Dex, oauth2-proxy, ArgoCD, and Gatekeeper (policy + controller).
+Re-run if some resources fail on the first pass — CRDs from one chart
+(cert-manager, Gatekeeper, Prometheus Operator, External Secrets) need to
+exist before dependent resources in the same apply can be created, and
+oauth2-proxy's ingress annotations on dashboard/grafana will 503 until
+oauth2-proxy itself is up.
 
 > **Namespace note for dex / alloy / kubernetes-dashboard.** These three
 > charts don't stamp `metadata.namespace` on their resources (they rely on
@@ -249,7 +273,7 @@ Verify:
 ```sh
 kubectl -n crementation get pods,svc,ingress,hpa
 kubectl -n crementation logs deploy/crementation --tail=50
-curl -H "Host: crementation.local" http://<ingress-node-public-ip>/
+curl -k -H "Host: crementation.local" https://<ingress-node-public-ip>/  # -k: internal-ca is self-signed
 ```
 
 ### 6. Backups
@@ -315,7 +339,7 @@ true` — drift and manual `kubectl edit` both get reverted automatically):
 
 | Application | Watches | Deploys |
 |---|---|---|
-| `infrastructure` | `infrastructure/` | cert-manager, ingress-nginx, dashboard, kube-prometheus-stack, Loki+Alloy, Vault, ESO, Dex, oauth2-proxy, Gatekeeper, NetworkPolicies |
+| `infrastructure` | `infrastructure/` | metrics-server, cert-manager, ingress-nginx, dashboard, kube-prometheus-stack, Loki+Alloy, Vault, ESO, Dex, oauth2-proxy, Gatekeeper, NetworkPolicies |
 | `mysql` | `applications/mysql/` | the official Bitnami MySQL chart |
 | `crementation` | `applications/crementation/overlays/prod/` | the app |
 | `mysql-backups` | `backups/mysql/` | the backup CronJob + PVC |
@@ -368,11 +392,14 @@ depends on ArgoCD being present.
 
 2. **`lint-manifests`** — renders every Kustomize tree this repo deploys
    (`infrastructure/`, `applications/crementation/base/`,
-   `applications/mysql/`) via `kustomize build --enable-helm`, then runs
-   **kube-linter** (config: `.kube-linter.yaml`, three checks explicitly
-   excluded there — `host-network`, `host-port`, `run-as-non-root` — each a
-   documented accepted trade-off, see Security review below) and **`helm
-   lint`** against the `crementation/` chart source.
+   `applications/mysql/`) via `kustomize build --enable-helm --load-restrictor
+   LoadRestrictionsNone`, then runs **kube-linter** (config:
+   `.kube-linter.yaml`, three checks explicitly excluded there —
+   `host-network`, `host-port`, `run-as-non-root` — each a documented accepted
+   trade-off, see Security review below) and **`helm lint`** against the
+   `crementation/` chart source. Because the three renders actually pull and
+   template every chart, this job doubles as a "does the whole thing still
+   build" gate.
 
 3. **`network-policy-check`** — a repo-structure check confirming every
    namespace that's supposed to have a deny-by-default NetworkPolicy still
@@ -389,10 +416,14 @@ right policies, not that a running cluster enforces them correctly).
 
 ## Security review
 
-Manual review of every chart's `values.yaml` in this repo (no
-`helm`/`kubesec`/`checkov`/`trivy` binaries were available when this was
-written; an automated version runs in CI, see above). Findings graded
-Critical / High / Medium / Low / Info.
+Manual review of every chart's `values.yaml` in this repo (a dedicated
+security *scan* with kubesec/checkov/trivy runs in CI, see above; this section
+is the human review). Findings graded Critical / High / Medium / Low / Info.
+Note: all four Kustomize trees have since been render-verified to build with
+real `kustomize` + `helm` — the manifests are valid and templatable; the
+remaining unverified items are runtime/cluster-behavior (the SSO login loop,
+NetworkPolicy vs hostNetwork, per-namespace `-n` for dex/alloy/dashboard),
+each flagged inline in the relevant file.
 
 > **ACTION REQUIRED — leaked credential in git history.** A GitHub OAuth
 > `clientSecret` and `clientID` were committed in plaintext early in this
@@ -517,8 +548,10 @@ Terminated, Reason: OOMKilled`.
   first (step 2 above) or every ExternalSecret is stuck on stale/no data.
 - MySQL secondaries take longer to become `Ready` than the primary — don't
   deploy the app before both show `Running`.
-- Confirm `crementation.local` / `dashboard.local` resolve on the
-  presentation machine (`/etc/hosts` pointed at the ingress node's IP).
+- Confirm every `*.local` host resolves on the presentation machine
+  (`/etc/hosts` → ingress node IP): `crementation.local`, `dashboard.local`,
+  `grafana.local`, `argocd.local`, and `dex.local` (the last is required for
+  the SSO login redirect to work).
 
 ### Debug endpoints
 
