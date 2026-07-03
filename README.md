@@ -178,6 +178,7 @@ kubectl -n vault exec -it vault-0 -- vault kv put secret/secret \
   DB_USERNAME=app_user \
   DB_PASSWORD=<generate-a-real-password> \
   DB_ROOT_PASSWORD=<generate-a-real-password> \
+  DB_REPLICATION_PASSWORD=<generate-a-real-password> \
   APP_KEY=<php artisan key:generate --show output>
 
 kubectl -n vault exec -it vault-0 -- vault kv put secret/dex \
@@ -382,9 +383,23 @@ Manual review of every chart's `values.yaml` in this repo (no
 written; an automated version runs in CI, see above). Findings graded
 Critical / High / Medium / Low / Info.
 
-**Summary:** 2 Critical findings, both already fixed (a leaked GitHub OAuth
-secret that was redacted and moved to Vault; a previously-unauthenticated
-Grafana ingress that's now gated by oauth2-proxy/Dex). 3 High findings, 2
+> **ACTION REQUIRED — leaked credential in git history.** A GitHub OAuth
+> `clientSecret` and `clientID` were committed in plaintext early in this
+> repo's history (commits `887f218` and `73ae92a`, reachable from `main`,
+> `develop`, and `kubequest-infra`). They were later redacted from the current
+> files and moved to Vault, but **redaction does not remove them from git
+> history** — anyone with repo access can still recover them via `git log -p`.
+> To neutralize this you must: (1) **rotate the credential** in the GitHub
+> OAuth app settings (this is the only step that actually invalidates the
+> leaked secret), and (2) optionally scrub history with `git filter-repo` or
+> BFG and force-push (coordinate with the team first, since it rewrites shared
+> branches). Until the credential is rotated, treat it as compromised.
+
+**Summary:** 2 Critical findings — the previously-unauthenticated Grafana
+ingress is fixed (now gated by oauth2-proxy/Dex); the leaked GitHub OAuth
+secret is redacted from current files but **still live in git history**
+pending credential rotation (see the action-required note above). 3 High
+findings, 2
 fixed (Prometheus/Alertmanager gained kube-rbac-proxy auth; oauth2-proxy's
 `cookie-secure` flag was stale from before TLS existed, now `true`) and 1
 still open (Vault's internal listener runs with `tls_disable = true` —

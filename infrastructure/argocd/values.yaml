@@ -52,7 +52,7 @@ repoServer:
       memory: 512Mi
 
 applicationSet:
-  enabled: false # not needed at this scale — 3 Application manifests are hand-written instead
+  enabled: false # not needed at this scale — 4 Application manifests are hand-written instead
 
 notifications:
   enabled: false
