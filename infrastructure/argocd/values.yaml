@@ -16,17 +16,17 @@ server:
     ingressClassName: nginx
     annotations:
       nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.auth.svc.cluster.local/oauth2/auth"
-      nginx.ingress.kubernetes.io/auth-signin: "http://$host/oauth2/start?rd=$escaped_request_uri"
+      nginx.ingress.kubernetes.io/auth-signin: "https://$host/oauth2/start?rd=$escaped_request_uri"
       cert-manager.io/cluster-issuer: internal-ca
       # ArgoCD's server serves gRPC-Web over the same port as HTTP; nginx
       # needs this to proxy the CLI/API correctly, not just the web UI.
       nginx.ingress.kubernetes.io/backend-protocol: HTTP
-    hosts:
-      - argocd.local
-    tls:
-      - secretName: argocd-tls
-        hosts:
-          - argocd.local
+    # Chart 7.x schema: hostname is a single string and tls is a bool (the
+    # chart then autogenerates the tls block for `hostname`). The old
+    # hosts:/tls:[] list form is silently ignored and falls back to
+    # argocd.example.com.
+    hostname: argocd.local
+    tls: true
 
   resources:
     requests:
