@@ -19,9 +19,14 @@ variable "node_count" {
 }
 
 variable "instance_type" {
-  description = "EC2 size. t3.large (2 vCPU / 8GB) is the realistic floor for the full stack on one node."
+  # m7i-flex.large (2 vCPU / 8GB) is the smallest FREE-TIER-ELIGIBLE type with
+  # enough RAM for the full stack — new "free plan" accounts can only launch
+  # free-tier-eligible types while on credits. (t3.large has the same specs but
+  # is NOT free-tier-eligible, so it fails with InvalidParameterCombination.)
+  # Verify eligible types: aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true
+  description = "EC2 size. m7i-flex.large (2 vCPU / 8GB) — free-tier-eligible, enough for the full stack."
   type        = string
-  default     = "t3.large"
+  default     = "m7i-flex.large"
 }
 
 variable "root_volume_gb" {
