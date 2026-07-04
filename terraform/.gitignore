@@ -1,0 +1,9 @@
+# NEVER commit Terraform state (may contain secrets) or the generated SSH key.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.pem
+crash.log
+*.tfvars       # may hold your IP / account-specific values
+!example.tfvars
