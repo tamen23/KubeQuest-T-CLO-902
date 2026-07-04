@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\MetricsController;
 use App\Models\Counter;
 use Illuminate\Support\Facades\Route;
 
@@ -18,3 +19,8 @@ Route::get('/', function () {
     $value = Counter::sum('count');
     return view('welcome', ['value' => $value]);
 });
+
+// Prometheus scrape endpoint for the app's own business metrics (scraped by
+// crementation/templates/servicemonitor.yaml). Root-level, unauthenticated —
+// standard for a /metrics endpoint on an internal ClusterIP service.
+Route::get('/metrics', [MetricsController::class, 'metrics']);

@@ -1,0 +1,55 @@
+{
+  "title": "Crementation - App metrics",
+  "uid": "crementation-app",
+  "tags": ["crementation", "app", "business"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Counter total (increments)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "max(crementation_counter_total)", "legendFormat": "total" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Counter rows stored",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        { "expr": "max(crementation_counter_rows)", "legendFormat": "rows" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "App up (scraped replicas)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "targets": [
+        { "expr": "sum(crementation_up)", "legendFormat": "up replicas" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Increment rate (per second)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "expr": "sum(rate(crementation_counter_total[1m]))",
+          "legendFormat": "increments/sec"
+        }
+      ]
+    }
+  ]
+}

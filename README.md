@@ -135,7 +135,7 @@ gatekeeper policy).
 ### 1. Namespaces
 
 ```sh
-for ns in crementation ingress-nginx dashboard monitoring vault external-secrets-system auth gatekeeper-system cert-manager argocd; do
+for ns in crementation ingress-nginx dashboard monitoring vault external-secrets-system auth gatekeeper-system cert-manager argocd velero vpa; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
 done
 ```
