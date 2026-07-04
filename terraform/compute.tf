@@ -19,13 +19,14 @@ resource "local_sensitive_file" "private_key" {
 }
 
 # --- EC2 nodes ---------------------------------------------------------------
-# node_count instances. With node_count=1 this is the cheap single-node test;
-# bump to 4 and they'll be named kubequest-node-0..3.
+# One instance per entry in var.nodes, named kubequest-<role> (kube-1, kube-2,
+# ingress, monitoring). Each carries its role as a tag so you can see the
+# layout in the console and so the outputs can group them.
 
 resource "aws_instance" "node" {
-  count                  = var.node_count
+  for_each               = var.nodes
   ami                    = data.aws_ami.al2023.id
-  instance_type          = var.instance_type
+  instance_type          = each.value.instance_type
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.cluster.id]
   key_name               = aws_key_pair.node.key_name
@@ -36,14 +37,21 @@ resource "aws_instance" "node" {
     volume_type = "gp3"
   }
 
-  tags = { Name = "${var.project}-node-${count.index}" }
+  tags = {
+    Name           = "${var.project}-${each.key}"
+    Role           = each.key
+    IsControlPlane = tostring(each.value.is_control_plane)
+  }
 }
 
-# --- Elastic IP for the first node (the ingress / entrypoint) ----------------
-# A static public IP that survives stop/start, so DNS / /etc/hosts stays valid.
+# --- Elastic IP on the ingress node ------------------------------------------
+# The brief's `ingress` node exposes services externally, so the static public
+# IP (survives stop/start, keeps DNS/etc/hosts valid) attaches there.
 
 resource "aws_eip" "ingress" {
-  domain   = "vpc"
-  instance = aws_instance.node[0].id
-  tags     = { Name = "${var.project}-ingress-eip" }
+  domain = "vpc"
+  instance = one([
+    for name, cfg in var.nodes : aws_instance.node[name].id if cfg.is_ingress
+  ])
+  tags = { Name = "${var.project}-ingress-eip" }
 }

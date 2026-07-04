@@ -10,23 +10,26 @@ variable "project" {
   default     = "kubequest"
 }
 
-# Start at 1 for the cheap single-node test; bump to 4 later to match the
-# brief's kube-1 / kube-2 / ingress / monitoring layout without rewriting anything.
-variable "node_count" {
-  description = "How many EC2 instances to create."
-  type        = number
-  default     = 1
-}
-
-variable "instance_type" {
-  # m7i-flex.large (2 vCPU / 8GB) is the smallest FREE-TIER-ELIGIBLE type with
-  # enough RAM for the full stack — new "free plan" accounts can only launch
-  # free-tier-eligible types while on credits. (t3.large has the same specs but
-  # is NOT free-tier-eligible, so it fails with InvalidParameterCombination.)
-  # Verify eligible types: aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true
-  description = "EC2 size. m7i-flex.large (2 vCPU / 8GB) — free-tier-eligible, enough for the full stack."
-  type        = string
-  default     = "m7i-flex.large"
+# The brief's 4-node layout (project.pdf p.4): kube-1 (control-plane+worker),
+# kube-2 (worker), ingress (exposes services), monitoring (Prometheus/Grafana/
+# Loki). Each entry sets the node's role + size. Sizing follows the brief's own
+# role split: the monitoring node carries the heavy observability stack so it's
+# 8GB; the rest do lighter work at 4GB. All types are FREE-TIER-ELIGIBLE
+# (verify: aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true).
+# `is_control_plane` marks where kubeadm init runs; `is_ingress` gets the EIP.
+variable "nodes" {
+  description = "Map of cluster nodes keyed by their KubeQuest role name."
+  type = map(object({
+    instance_type    = string
+    is_control_plane = bool
+    is_ingress       = bool
+  }))
+  default = {
+    kube-1     = { instance_type = "m7i-flex.large", is_control_plane = true, is_ingress = false } # control plane + worker
+    kube-2     = { instance_type = "c7i-flex.large", is_control_plane = false, is_ingress = false } # worker
+    ingress    = { instance_type = "c7i-flex.large", is_control_plane = false, is_ingress = true }  # exposes services (gets EIP)
+    monitoring = { instance_type = "m7i-flex.large", is_control_plane = false, is_ingress = false } # heavy observability stack -> 8GB
+  }
 }
 
 variable "root_volume_gb" {
