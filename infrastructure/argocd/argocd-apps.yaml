@@ -67,6 +67,14 @@ spec:
       enableHelm: true
   destination:
     server: https://kubernetes.default.svc
+    # The crementation chart's rendered resources don't carry an explicit
+    # metadata.namespace (kustomize's namespace: directive doesn't reliably
+    # apply to Helm-inflated resources), so pin the target namespace here —
+    # otherwise ArgoCD would deploy the app into the argocd namespace. The
+    # other three Applications omit this on purpose: their resources already
+    # carry their own namespaces (mysql/backups -> crementation; infra is
+    # multi-namespace). CreateNamespace=true makes the namespace on first sync.
+    namespace: crementation
   syncPolicy:
     automated:
       prune: true

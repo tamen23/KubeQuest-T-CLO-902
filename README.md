@@ -381,7 +381,9 @@ depends on ArgoCD being present.
 ## CI/CD
 
 `.github/workflows/ci.yml` runs on every push to `main`, `develop`, and any
-`kubequest-*` branch, plus every PR into `main`/`develop`. Three parallel jobs:
+`kubequest-*` branch, plus every PR into `main`/`develop`. Four jobs (the
+first three are validation and run everywhere; the fourth publishes and runs
+on `main` only):
 
 1. **`build-and-scan-image`** — builds the `crementation` app image from
    `sample-app-master/Dockerfile` (scan-only, not pushed anywhere), scans it
@@ -408,11 +410,29 @@ depends on ArgoCD being present.
    line (the safety net for the step-3 comment-out workaround above never
    accidentally landing in a commit).
 
-**What's not automated yet:** no CD/auto-deploy step (ArgoCD above is the
-separate layer for that), no image push/registry step (the Docker Hub image
-is built and pushed manually today), and no runtime NetworkPolicy
-enforcement testing against a live cluster (only that the repo declares the
-right policies, not that a running cluster enforces them correctly).
+4. **`push-app-image`** (main only) — after the validation jobs pass, on a
+   push to `main`, builds the app image and pushes it to Docker Hub as
+   `maxi2/crementation-app:v1.1.0` + `:latest`. This is what makes app code
+   changes (e.g. the `/metrics` endpoint) actually reach the cluster. The tag
+   must stay in sync with `crementation/values.yaml`'s `image.tag`. Requires
+   two repo secrets — `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (Settings →
+   Secrets and variables → Actions). On branches/PRs the image is still built
+   (job 1, `push:false`) so every change is validated; only `main` publishes.
+
+**First-deploy note (image + ArgoCD):** because `values.yaml` pins
+`v1.1.0`, the app pods can only start once the `push-app-image` job has
+published that tag. On the very first `main` deploy, if ArgoCD (or a manual
+apply) runs before the image is pushed, the crementation pods `ImagePullBackOff`
+until the tag exists — then ArgoCD's `selfHeal`/retry (or `kubectl rollout`)
+picks it up automatically. Likewise the crementation app depends on MySQL +
+the `laravel-db` secret (Vault → ESO); ArgoCD syncs all four Applications in
+parallel with no ordering, so the app pod may restart a few times until its
+dependencies are up. Both converge without intervention.
+
+**What's not automated yet:** no cluster-side CD trigger beyond ArgoCD's poll
+(no push-based webhook), and no runtime NetworkPolicy enforcement testing
+against a live cluster (only that the repo declares the right policies, not
+that a running cluster enforces them correctly).
 
 ## Security review
 

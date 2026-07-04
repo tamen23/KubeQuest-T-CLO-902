@@ -13,6 +13,12 @@ kind: VerticalPodAutoscaler
 metadata:
   name: crementation
   namespace: crementation
+  annotations:
+    # This CR needs the VerticalPodAutoscaler CRD (installed by the vpa Helm
+    # chart in kustomization.yaml). ArgoCD applies chart CRDs in wave 0; a
+    # later wave here ensures the CRD exists before this CR is applied, so a
+    # first sync doesn't fail on a missing resource type.
+    argocd.argoproj.io/sync-wave: "5"
 spec:
   targetRef:
     apiVersion: apps/v1

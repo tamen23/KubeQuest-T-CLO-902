@@ -120,3 +120,40 @@ jobs:
       - name: Confirm infrastructure/kustomization.yaml still references network-policies
         run: grep -q "network-policies" infrastructure/kustomization.yaml || \
           (echo "::error::network-policies missing from infrastructure/kustomization.yaml resources" && exit 1)
+
+  # CD: build + push the app image to Docker Hub, but ONLY on a push to main.
+  # This is what makes app code changes (e.g. the /metrics endpoint) actually
+  # reach the cluster — the image tag pinned in crementation/values.yaml must
+  # match APP_IMAGE_TAG below. On other branches/PRs the build-and-scan-image
+  # job above still builds the image (push:false) so CI validates every change;
+  # only merges to main publish it.
+  #
+  # Requires two repo secrets (Settings -> Secrets and variables -> Actions):
+  #   DOCKERHUB_USERNAME  — the Docker Hub account (e.g. maxi2)
+  #   DOCKERHUB_TOKEN     — a Docker Hub access token (not the password)
+  push-app-image:
+    name: Build + push app image (main only)
+    runs-on: ubuntu-latest
+    needs: [build-and-scan-image, lint-manifests]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    env:
+      APP_IMAGE: maxi2/crementation-app
+      APP_IMAGE_TAG: v1.1.0 # keep in sync with crementation/values.yaml image.tag
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build + push (${{ env.APP_IMAGE_TAG }} + latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: sample-app-master
+          file: sample-app-master/Dockerfile
+          push: true
+          tags: |
+            ${{ env.APP_IMAGE }}:${{ env.APP_IMAGE_TAG }}
+            ${{ env.APP_IMAGE }}:latest

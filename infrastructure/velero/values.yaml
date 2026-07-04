@@ -3,18 +3,20 @@
 # plugin, EBS volumes) into an S3 bucket, so you can restore the whole cluster
 # — or a single namespace — onto a fresh cluster.
 #
-# PREREQUISITES (environment-specific, NOT committed):
-#   1. An S3 bucket in your AWS region, e.g. kubequest-velero-<group>.
-#   2. AWS credentials with access to it, created as a Secret BEFORE this
-#      installs (the chart references it via credentials.existingSecret):
-#        kubectl create secret generic velero-aws-creds -n velero \
-#          --from-file=cloud=./credentials-velero
-#      where ./credentials-velero is:
+# PREREQUISITE (the ONE thing not committed — credentials):
+#   Create the AWS creds Secret BEFORE this installs (the chart references it
+#   via credentials.existingSecret). Put your keys in a file `credentials-velero`:
 #        [default]
 #        aws_access_key_id=<KEY>
 #        aws_secret_access_key=<SECRET>
-#   3. Fill in bucket + region below.
-# See infrastructure/velero/README.md for the backup/restore commands.
+#   then:
+#        kubectl create secret generic velero-aws-creds -n velero \
+#          --from-file=cloud=./credentials-velero
+#        rm credentials-velero   # never commit this file
+#
+# The S3 bucket below (kubequest-velero-092040680793, eu-west-3) already exists
+# — created for this project with public access blocked. See
+# infrastructure/velero/README.md for backup/restore commands.
 
 initContainers:
   - name: velero-plugin-for-aws
@@ -30,14 +32,14 @@ configuration:
   backupStorageLocation:
     - name: default
       provider: aws
-      bucket: REPLACE-WITH-YOUR-S3-BUCKET
+      bucket: kubequest-velero-092040680793
       config:
-        region: REPLACE-WITH-YOUR-REGION # e.g. eu-central-1
+        region: eu-west-3
   volumeSnapshotLocation:
     - name: default
       provider: aws
       config:
-        region: REPLACE-WITH-YOUR-REGION
+        region: eu-west-3
 
 # A daily full-cluster backup, kept 7 days. Add/adjust as needed.
 schedules:

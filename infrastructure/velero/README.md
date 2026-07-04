@@ -4,8 +4,23 @@ Complements the app-level MySQL dump (`backups/mysql/`) with **whole-cluster**
 backups: all Kubernetes resources (and EBS volumes via the AWS plugin) into an
 S3 bucket, restorable onto a fresh cluster.
 
-See `values.yaml` for the S3 bucket / AWS-credential prerequisites — those are
-environment-specific and must be set up before Velero installs.
+The S3 bucket (`kubequest-velero-092040680793`, eu-west-3) already exists —
+created for this project with public access blocked. The only remaining
+prerequisite is the AWS credentials Secret; create it before Velero installs:
+
+```sh
+cat > credentials-velero <<EOF
+[default]
+aws_access_key_id=<YOUR_KEY>
+aws_secret_access_key=<YOUR_SECRET>
+EOF
+kubectl create secret generic velero-aws-creds -n velero --from-file=cloud=./credentials-velero
+rm credentials-velero   # never commit this file
+```
+
+(This project reuses the `terraform-admin` keys for simplicity. Best practice
+would be a dedicated least-privilege IAM user scoped to just this bucket +
+EBS snapshots — swap those keys in if you tighten it later.)
 
 ## Common operations (Velero CLI)
 

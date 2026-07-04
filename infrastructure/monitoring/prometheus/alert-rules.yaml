@@ -13,6 +13,10 @@ metadata:
   namespace: monitoring
   labels:
     release: prometheus
+  annotations:
+    # Needs the PrometheusRule CRD from kube-prometheus-stack (wave 0). A later
+    # sync-wave keeps ArgoCD from applying this before that CRD exists.
+    argocd.argoproj.io/sync-wave: "5"
 spec:
   groups:
     - name: kubequest.rules
