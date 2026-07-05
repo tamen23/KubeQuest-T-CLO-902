@@ -6,27 +6,30 @@
 # maxSurge: 1) + readinessProbe + minReadySeconds, that count should be 0.
 #
 # Usage:
-#   ./scripts/zero-downtime-test.sh <ingress-ip-or-hostname> [duration-seconds]
+#   ./scripts/zero-downtime-test.sh <app-nip.io-hostname> [duration-seconds]
+#
+# TARGET is the app's public hostname (e.g. crementation.<ingress-ip>.nip.io)
+# — used as both the curl URL and Host header (same value with nip.io).
 #
 # In a SEPARATE terminal, while this runs, trigger a rollout, e.g.:
 #   kubectl -n crementation rollout restart deploy/crementation
 # (or a real `helm upgrade ... --set image.tag=<new>`).
 set -euo pipefail
 
-TARGET="${1:?Usage: $0 <ingress-ip-or-hostname> [duration-seconds]}"
+TARGET="${1:?Usage: $0 <app-nip.io-hostname> [duration-seconds]}"
 DURATION="${2:-60}"
 
 ok=0
 fail=0
 end=$(( $(date +%s) + DURATION ))
 
-echo "Probing https://${TARGET}/ (Host: crementation.local) for ${DURATION}s."
+echo "Probing https://${TARGET}/ for ${DURATION}s."
 echo "Trigger 'kubectl -n crementation rollout restart deploy/crementation' now."
 echo
 
 while [ "$(date +%s)" -lt "$end" ]; do
   code=$(curl -sk -o /dev/null -w '%{http_code}' \
-    --max-time 3 -H "Host: crementation.local" "https://${TARGET}/" || echo 000)
+    --max-time 3 -H "Host: ${TARGET}" "https://${TARGET}/" || echo 000)
   if [ "$code" = "200" ]; then
     ok=$((ok+1))
     printf '.'

@@ -17,20 +17,25 @@
 # file directly is the only reliable way with this chart's current template)
 #
 # Usage:
-#   ./scripts/failure-demo.sh <ingress-ip-or-hostname> cpu [seconds]
-#   ./scripts/failure-demo.sh <ingress-ip-or-hostname> memory [rounds]
-#   ./scripts/failure-demo.sh <ingress-ip-or-hostname> crash
+#   ./scripts/failure-demo.sh <app-nip.io-hostname> cpu [seconds]
+#   ./scripts/failure-demo.sh <app-nip.io-hostname> memory [rounds]
+#   ./scripts/failure-demo.sh <app-nip.io-hostname> crash
+#
+# TARGET is the app's public hostname (e.g. crementation.<ingress-ip>.nip.io)
+# — used as both the curl URL and the Host header, since with nip.io they're
+# the same value (unlike the old .local setup where they could differ).
 set -euo pipefail
 
-TARGET="${1:?Usage: $0 <ingress-ip-or-hostname> {cpu|memory|crash} [param]}"
-MODE="${2:?Usage: $0 <ingress-ip-or-hostname> {cpu|memory|crash} [param]}"
+TARGET="${1:?Usage: $0 <app-nip.io-hostname> {cpu|memory|crash} [param]}"
+MODE="${2:?Usage: $0 <app-nip.io-hostname> {cpu|memory|crash} [param]}"
+HOST_HEADER="$TARGET"
 
 case "$MODE" in
   cpu)
     SECONDS_PARAM="${3:-30}"
     echo "== Burning CPU for ${SECONDS_PARAM}s on one worker =="
     echo "Watch: kubectl -n crementation top pods ; kubectl -n crementation get hpa crementation --watch"
-    curl -sk -H "Host: crementation.local" \
+    curl -sk -H "Host: ${HOST_HEADER}" \
       "https://${TARGET}/api/debug/burn-cpu?seconds=${SECONDS_PARAM}"
     echo
     ;;
@@ -41,7 +46,7 @@ case "$MODE" in
     echo "Watch: kubectl -n crementation top pods ; kubectl -n crementation get pods --watch"
     echo "Expect an OOMKill once usage crosses resources.limits.memory (crementation/values.yaml, default 512Mi)"
     for i in $(seq 1 "$ROUNDS"); do
-      curl -sk -H "Host: crementation.local" \
+      curl -sk -H "Host: ${HOST_HEADER}" \
         "https://${TARGET}/api/debug/leak-memory?mb=10"
       echo " (round $i/$ROUNDS)"
       sleep 1
@@ -50,7 +55,7 @@ case "$MODE" in
 
   crash)
     echo "== Triggering a single 500 (request-level crash, not container-level) =="
-    curl -sk -o /dev/null -w '%{http_code}\n' -H "Host: crementation.local" \
+    curl -sk -o /dev/null -w '%{http_code}\n' -H "Host: ${HOST_HEADER}" \
       "https://${TARGET}/api/debug/crash"
     echo "For a container-level crash (to demo rollback), instead redeploy with a broken image tag —"
     echo "see the README's 'Broken deployment + automatic rollback' section."
