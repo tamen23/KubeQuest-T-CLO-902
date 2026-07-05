@@ -68,7 +68,17 @@ kubectl get externalsecrets -A
 Likely causes:
 
 - Vault is sealed.
-- Vault Kubernetes auth role is missing or has the wrong policy field.
+- **The Vault Kubernetes auth role used the wrong field.** The role must set
+  `token_policies=<policy-name>` — `policy=<policy-name>` (no `token_` prefix)
+  silently no-ops: the role gets created with `token_policies: []`, ESO
+  authenticates successfully but then gets `403 permission denied` on every
+  read, since its token carries no policies. Check with:
+  ```sh
+  kubectl -n vault exec vault-0 -- vault read auth/kubernetes/role/external-secrets
+  ```
+  `token_policies` must show `[external-secrets-read]`, not `[]`. Fix by
+  re-running the `vault write auth/kubernetes/role/external-secrets ...
+  token_policies=external-secrets-read` command (see `scripts/deploy.sh`).
 - NetworkPolicy blocks traffic from `external-secrets-system` to `vault`.
 - The referenced Vault path was not seeded.
 
@@ -160,6 +170,17 @@ Likely causes:
 The deploy script deletes the old certificate and secret when it patches the
 host so cert-manager can issue a new Let's Encrypt certificate.
 
+If a browser warning reappears **after** a previously-working deploy (e.g.
+following a manual `kubectl apply` of the app or infra manifests), don't
+re-patch by hand — the `nip-io-reconciler` CronJob (`kube-system`, every 3
+minutes) detects the drift back to `.local`/internal-ca and fixes it
+automatically. Force it immediately instead of waiting:
+
+```sh
+kubectl -n kube-system create job --from=cronjob/nip-io-reconciler fix-now
+kubectl -n kube-system logs job/fix-now
+```
+
 ## NetworkPolicies Break Traffic
 
 Symptoms:
@@ -199,6 +220,36 @@ Fresh installs can need one manual nudge after CRDs and webhooks exist. If
 NetworkPolicies are the blocker, pause automated sync, remove the early policy
 objects, let pods settle, then re-enable sync by re-applying
 `infrastructure/argocd/argocd-apps.yaml`.
+
+## Prometheus Pod Never Appears (only node-exporter/operator run)
+
+Symptoms:
+
+- `kubectl -n monitoring get pods` shows the operator, node-exporter, and
+  kube-state-metrics running, but no `prometheus-prometheus-...` StatefulSet
+  pod, even though a `Prometheus` custom resource exists.
+- `kubectl -n monitoring describe prometheus <name>` shows `Events: <none>` —
+  the operator never even attempted to reconcile it.
+
+Cause: the Prometheus Operator caches which CRDs exist **at its own startup**.
+If it started before the `monitoring.coreos.com` CRDs were installed (e.g. the
+CRDs got applied in a later pass, or the operator was already running from an
+earlier partial deploy), its logs show `resource "prometheuses" ... not
+installed in the cluster` from its startup — and it never re-checks after the
+CRDs show up later.
+
+Fix: restart the operator so it re-discovers the CRDs.
+
+```sh
+kubectl -n monitoring rollout restart deploy/prometheus-kube-prometheus-operator
+kubectl -n monitoring rollout status deploy/prometheus-kube-prometheus-operator
+# give it ~20-30s, then:
+kubectl -n monitoring get pods -l app.kubernetes.io/name=prometheus
+```
+
+This only happens from partial/out-of-order applies (re-installing the chart
+piecemeal while debugging). A normal fresh `scripts/deploy.sh` run installs
+the CRDs and the operator together in the same pass and doesn't hit this.
 
 ## HPA Does Not Scale
 

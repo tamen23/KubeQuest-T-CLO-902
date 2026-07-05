@@ -55,7 +55,7 @@ scheduler, using pod anti-affinity to spread replicas across the two.
 | `monitoring`                | kube-prometheus-stack (Prometheus, Grafana, Alertmanager, kube-rbac-proxy sidecars), Loki, Alloy |
 | `vault`                     | HashiCorp Vault (single-node, Raft storage)             |
 | `external-secrets-system`   | External Secrets Operator                               |
-| `auth`                      | Dex (OIDC provider exposed at `dex.local`, GitHub org connector), oauth2-proxy (enforces login on dashboard/Grafana/ArgoCD ingresses) |
+| `auth`                      | Dex (OIDC provider, GitHub org connector), oauth2-proxy (enforces login on dashboard/Grafana/ArgoCD ingresses) |
 | `gatekeeper-system`         | OPA Gatekeeper (policy: reject `:latest` image tags on `crementation`) |
 | `cert-manager`              | cert-manager (internal-ca + letsencrypt-prod ClusterIssuers) |
 | `argocd`                    | ArgoCD (optional GitOps auto-sync, see below)            |
@@ -69,24 +69,34 @@ Internet
   v
 ingress node (nginx-ingress, hostNetwork:80/443)
   |
-  +--> crementation.local  -> crementation app Service -> crementation Deployment (2+ pods, kube-1/kube-2)
-  |                                                              |
-  |                                                              v
+  +--> crementation.<ip>.nip.io  -> crementation app Service -> crementation Deployment (2+ pods, kube-1/kube-2)
+  |                                                                    |
+  |                                                                    v
   |                                                     mysql-primary (writes) / mysql-read (reads)
   |
-  +--> dashboard.local -> [auth-url/auth-signin check] -> oauth2-proxy -> kubernetes-dashboard
+  +--> dashboard.<ip>.nip.io -> [auth-url/auth-signin check] -> oauth2-proxy -> kubernetes-dashboard
   |
-  +--> grafana.local   -> [auth-url/auth-signin check] -> oauth2-proxy -> Grafana (monitoring node)
+  +--> grafana.<ip>.nip.io   -> [auth-url/auth-signin check] -> oauth2-proxy -> Grafana (monitoring node)
   |
-  +--> argocd.local    -> [auth-url/auth-signin check] -> oauth2-proxy -> ArgoCD server
+  +--> argocd.<ip>.nip.io    -> [auth-url/auth-signin check] -> oauth2-proxy -> ArgoCD server
 
-All ingress hostnames terminate TLS at ingress-nginx via cert-manager
-(internal-ca ClusterIssuer today; swap to letsencrypt-prod once served from a
-real domain — see infrastructure/cert-manager/cluster-issuers.yaml).
+`<ip>` is the ingress node's Elastic IP. nip.io is free public wildcard DNS
+that resolves `<anything>.<ip>.nip.io` to `<ip>` — so every hostname above
+works from any machine with zero setup (no /etc/hosts entry). The committed
+chart defaults are `.local` names; `scripts/deploy.sh` (step 8.5) rewrites them
+to nip.io at deploy time, and a self-healing CronJob (`nip-io-reconciler`, in
+`kube-system`, every 3 minutes) keeps them that way even if a later manifest
+re-apply reverts one — see docs/project-overview.md.
+
+All ingress hostnames terminate TLS at ingress-nginx via cert-manager, issued
+by `letsencrypt-prod` (real, browser-trusted — possible specifically because
+nip.io is a real public domain cert-manager can complete an HTTP-01 challenge
+against; `.local` names can't get a real cert, only the self-signed
+`internal-ca` fallback — see infrastructure/cert-manager/cluster-issuers.yaml).
 
 oauth2-proxy delegates login to Dex; a request that fails the ingress-nginx
 auth-url check is redirected to oauth2-proxy's /oauth2/start, which redirects
-to Dex (at its own external ingress `https://dex.local` — the OIDC issuer URL
+to Dex (at its own external ingress, `dex.<ip>.nip.io` — the OIDC issuer URL
 must be browser-reachable, so Dex is exposed like the other tools), which
 redirects to GitHub. ingress-nginx re-checks auth-url on every request.
 oauth2-proxy itself talks to Dex over the in-cluster service for token/JWKS
@@ -116,7 +126,7 @@ GitOps flow (optional): git push to main --> ArgoCD detects the change -->
 - **DaemonSet + hostNetwork for ingress-nginx**: this lab cluster has no cloud LoadBalancer in front of it, so the ingress controller binds host ports directly on the dedicated `ingress` node.
 - **Vault single-node with Raft storage, no auto-unseal**: full HA + auto-unseal needs a cloud KMS this lab account doesn't have. Traded off for a documented manual unseal step (see Deployment below) instead of a dev-mode Pod with a hardcoded root token.
 - **MySQL via the official Bitnami chart in `replication` mode** (1 primary + 2 secondaries) satisfies both the brief's "use the official chart for the database" requirement and its redundancy requirement.
-- **cert-manager with a self-signed internal-ca ClusterIssuer** (not just Let's Encrypt): Let's Encrypt's HTTP-01 challenge needs a real public DNS record pointing at the ingress node, which a `.local` hostname can never satisfy. The internal CA gets TLS actually running end-to-end today; switching to `letsencrypt-prod` is a one-line annotation change once a real domain exists.
+- **cert-manager with both an internal-ca and a letsencrypt-prod ClusterIssuer**: the committed chart defaults (`.local` hostnames) use the self-signed `internal-ca` — Let's Encrypt's HTTP-01 challenge needs a real public DNS record, which `.local` can never satisfy. At deploy time, `scripts/deploy.sh` switches every ingress to a `<name>.<ingress-ip>.nip.io` hostname (real public DNS, zero client setup) and its issuer to `letsencrypt-prod`, so the deployed cluster actually serves real, browser-trusted certificates — not just internal-ca. A CronJob (`nip-io-reconciler`) keeps this in place even if a later manifest re-apply reverts an ingress to its `.local`/internal-ca default.
 - **kube-rbac-proxy in front of Prometheus/Alertmanager, on top of (not instead of) oauth2-proxy/Dex on Grafana**: two independent gates for two independent audiences — Grafana users go through Dex/GitHub org membership, while anyone querying PromQL directly needs a Kubernetes RBAC grant.
 - **ArgoCD as an optional layer over the manual `kubectl`/`kustomize`/`helm` flow, not a replacement for it**: every Application it manages points at the exact same paths documented manually below, so the underlying manifests never depend on ArgoCD being present.
 
@@ -224,9 +234,13 @@ rm vault-init.txt   # keep out of the repo and out of shell history
 > it installs+unseals Vault, configures k8s auth, generates the random secrets,
 > and seeds Vault from env vars you export for the one run. See its header.
 
-> In the GitHub OAuth app settings, the **Authorization callback URL** must be
-> `https://dex.local/callback` (Dex's issuer + `/callback`, matching
-> `infrastructure/dex/values.yaml`). `OAUTH2_PROXY_CLIENT_SECRET` /
+> In the GitHub OAuth app settings, the **Authorization callback URL** must
+> exactly match Dex's issuer + `/callback`. The chart default (before
+> `scripts/deploy.sh` patches it to nip.io) is `https://dex.local/callback`
+> (see `infrastructure/dex/values.yaml`); once deployed, it's
+> `https://dex.<ingress-ip>.nip.io/callback` — update the GitHub OAuth app
+> setting to match whichever is actually live, since the ingress IP changes on
+> every fresh `terraform apply`. `OAUTH2_PROXY_CLIENT_SECRET` /
 > `OAUTH2_PROXY_COOKIE_SECRET` are the oauth2-proxy static-client + cookie
 > secrets (Dex-internal, unrelated to GitHub).
 
@@ -267,8 +281,10 @@ Confirm auth is actually enforced before moving on:
 ```sh
 curl -skI -H "Host: dashboard.local" https://<ingress-node-public-ip>/ | head -1
 # expect: HTTP/1.1 302 Found  (redirected to oauth2-proxy's /oauth2/start, not 200)
-# -k because internal-ca is self-signed — browsers will warn too, that's
-# expected until you switch to letsencrypt-prod with a real domain
+# -k because these manifests are still on their committed .local/internal-ca
+# defaults at this point in the walkthrough — internal-ca is self-signed, so
+# -k (and a browser warning) is expected here. Once step 8's nip.io patch
+# runs, this becomes a real Let's Encrypt cert and -k is no longer needed.
 ```
 
 ### 4. Database
@@ -291,7 +307,7 @@ Verify:
 ```sh
 kubectl -n crementation get pods,svc,ingress,hpa
 kubectl -n crementation logs deploy/crementation --tail=50
-curl -k -H "Host: crementation.local" https://<ingress-node-public-ip>/  # -k: internal-ca is self-signed
+curl -k -H "Host: crementation.local" https://<ingress-node-public-ip>/  # -k: still on internal-ca at this point (see step 8)
 ```
 
 ### 6. Backups
@@ -331,10 +347,37 @@ If External Secrets Operator stops reconciling after this step: several pods
 (external-secrets, Dex, cert-manager, Gatekeeper) need to reach the
 Kubernetes API server directly, not just DNS/other pods. The API server's
 ClusterIP is cluster-specific and not hardcoded in these policies — most
-CNIs (Calico, used here) implicitly permit apiserver traffic regardless of
+CNIs (Flannel, used here) implicitly permit apiserver traffic regardless of
 NetworkPolicy, but verify this on your cluster; the fix is a per-namespace
 `ipBlock` egress rule using `kubectl get svc kubernetes -n default -o
 jsonpath='{.spec.clusterIP}'`.
+
+### 8. Public hostnames + trusted certificates (nip.io + Let's Encrypt)
+
+Everything above is still on the chart's committed `.local` hostnames and the
+self-signed `internal-ca` issuer. Switch every ingress to a real, publicly
+resolvable hostname and a browser-trusted certificate:
+
+```sh
+for e in "crementation:crementation:crementation" "grafana:prometheus-grafana:monitoring" \
+         "dashboard:kubernetes-dashboard:dashboard" "argocd:argocd-server:argocd" "dex:dex:auth"; do
+  sub="${e%%:*}"; rest="${e#*:}"; name="${rest%%:*}"; ns="${rest##*:}"
+  host="$sub.<ingress-node-public-ip>.nip.io"
+  kubectl -n "$ns" annotate ingress "$name" cert-manager.io/cluster-issuer=letsencrypt-prod --overwrite
+  kubectl -n "$ns" patch ingress "$name" --type=json \
+    -p="[{\"op\":\"replace\",\"path\":\"/spec/rules/0/host\",\"value\":\"$host\"}]"
+  sec=$(kubectl -n "$ns" get ingress "$name" -o jsonpath='{.spec.tls[0].secretName}')
+  kubectl -n "$ns" patch ingress "$name" --type=json \
+    -p="[{\"op\":\"replace\",\"path\":\"/spec/tls/0/hosts/0\",\"value\":\"$host\"}]"
+  kubectl -n "$ns" delete certificate "$sec" secret "$sec" --ignore-not-found  # force LE re-issue
+done
+```
+
+This is exactly what `scripts/deploy.sh` automates (step 8.5), plus it writes
+the `kube-system/nip-io-ingress-ip` ConfigMap so the `nip-io-reconciler`
+CronJob keeps re-applying this automatically every 3 minutes — so a manual
+`kubectl apply` of any of the manifests above later on doesn't silently revert
+you back to `.local`/internal-ca. See docs/project-overview.md.
 
 ### Redeploying after a change
 
@@ -436,7 +479,7 @@ on `main` only):
 
 4. **`push-app-image`** (main only) — after the validation jobs pass, on a
    push to `main`, builds the app image and pushes it to Docker Hub as
-   `maxi2/crementation-app:v1.1.0` + `:latest`. This is what makes app code
+   `maxi2/crementation-app:v1.1.1` + `:latest`. This is what makes app code
    changes (e.g. the `/metrics` endpoint) actually reach the cluster. The tag
    must stay in sync with `crementation/values.yaml`'s `image.tag`. Requires
    two repo secrets — `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (Settings →
@@ -444,7 +487,7 @@ on `main` only):
    (job 1, `push:false`) so every change is validated; only `main` publishes.
 
 **First-deploy note (image + ArgoCD):** because `values.yaml` pins
-`v1.1.0`, the app pods can only start once the `push-app-image` job has
+`v1.1.1`, the app pods can only start once the `push-app-image` job has
 published that tag. On the very first `main` deploy, if ArgoCD (or a manual
 apply) runs before the image is pushed, the crementation pods `ImagePullBackOff`
 until the tag exists — then ArgoCD's `selfHeal`/retry (or `kubectl rollout`)
@@ -535,8 +578,9 @@ The dashboard JSON is wrapped in a ConfigMap
 `grafana_dashboard: "1"`, which kube-prometheus-stack's Grafana sidecar
 auto-imports — no manual "import dashboard" click needed.
 
-To demo: log into Grafana (`https://grafana.local`), open **Crementation -
-Logs**, trigger some errors (`./scripts/failure-demo.sh <ip> crash` a few
+To demo: log into Grafana (`https://grafana.<ingress-ip>.nip.io`), open
+**Crementation - Logs**, trigger some errors
+(`./scripts/failure-demo.sh crementation.<ingress-ip>.nip.io crash` a few
 times), and watch the error-rate panel spike and the filtered stream update
 live (10s refresh).
 
@@ -558,15 +602,20 @@ require editing YAML on the fly.
 
 ```sh
 kubectl -n crementation get hpa crementation --watch &
-./scripts/load-test.sh <ingress-node-public-ip> 3m 50
+./scripts/load-test.sh crementation.<ingress-ip>.nip.io 180 50
 ```
+
+(No external load-test tool needed — plain bash + curl, drives
+`/api/debug/burn-cpu` directly; requires `DEBUG_ENDPOINTS_ENABLED=true`, see
+Debug endpoints below. Proven live: 15 concurrent workers for 60s took the HPA
+from 2→5 replicas, 2%→367% CPU vs the 70% target.)
 
 Narrate: CPU climbing in Grafana, HPA events firing (`kubectl -n crementation
 describe hpa crementation`), new pods scheduling onto whichever node has room
 (pod anti-affinity spreads them), Prometheus/Loki picking up new pods
 automatically. For a sharper, more deterministic version, use the CPU-burn
-debug endpoint instead (see Debug endpoints below):
-`./scripts/failure-demo.sh <ip> cpu 60`.
+debug endpoint directly instead:
+`./scripts/failure-demo.sh crementation.<ingress-ip>.nip.io cpu 60`.
 
 **4. Broken deployment + automatic rollback:**
 
@@ -583,19 +632,22 @@ kubectl -n crementation rollout status deploy/crementation   # back to the last 
 
 For a sharper version showing a real OOMKill instead of just a failed probe,
 use the memory-leak debug endpoint (see below):
-`./scripts/failure-demo.sh <ip> memory 80`, then watch `kubectl -n
-crementation get pods --watch` for `RESTARTS` incrementing and `Last State:
-Terminated, Reason: OOMKilled`.
+`./scripts/failure-demo.sh crementation.<ingress-ip>.nip.io memory 80`, then
+watch `kubectl -n crementation get pods --watch` for `RESTARTS` incrementing
+and `Last State: Terminated, Reason: OOMKilled`.
 
 **Known fragile points to check the morning of:**
 - Vault starts **sealed** after the nightly VM shutdown script — unseal it
   first (step 2 above) or every ExternalSecret is stuck on stale/no data.
 - MySQL secondaries take longer to become `Ready` than the primary — don't
   deploy the app before both show `Running`.
-- Confirm every `*.local` host resolves on the presentation machine
-  (`/etc/hosts` → ingress node IP): `crementation.local`, `dashboard.local`,
-  `grafana.local`, `argocd.local`, and `dex.local` (the last is required for
-  the SSO login redirect to work).
+- Nothing to configure for hostnames — every service is reachable at
+  `https://<name>.<ingress-ip>.nip.io` with zero setup on the presentation
+  machine (nip.io is public DNS, no `/etc/hosts` edit needed). Just confirm
+  you have the current `<ingress-ip>` (`terraform output ingress_public_ip`);
+  it only changes on a full `terraform destroy` + re-apply, not on stop/start.
+  If a cert warning ever appears, give it ~3 minutes — the `nip-io-reconciler`
+  CronJob self-heals it (see docs/runbooks/troubleshooting.md).
 
 ### Debug endpoints
 
@@ -603,7 +655,15 @@ Per the brief's suggestion to "enrich the application code with some memory
 leaks, loops consuming CPU, or anything that could lead to errors":
 `sample-app-master/app/Http/Controllers/DebugController.php` adds
 `/api/debug/burn-cpu`, `/api/debug/leak-memory`, and `/api/debug/crash`,
-gated behind `DEBUG_ENDPOINTS_ENABLED` (off by default in
-`crementation/values.yaml` — never enable in a normal deploy). `scripts/load-test.sh`
-and `scripts/failure-demo.sh` drive them for the demos above. Remember to
-flip the flag back to `false` and re-apply once done.
+gated behind `DEBUG_ENDPOINTS_ENABLED` (`false` in
+`crementation/values.yaml` — never on in a normal deploy). `scripts/load-test.sh`
+and `scripts/failure-demo.sh` drive them for the demos above.
+
+Enable/disable it live for a demo without touching git or re-deploying the
+chart:
+
+```sh
+kubectl -n crementation set env deploy/crementation DEBUG_ENDPOINTS_ENABLED=true
+# ... run the demo ...
+kubectl -n crementation set env deploy/crementation DEBUG_ENDPOINTS_ENABLED=false
+```

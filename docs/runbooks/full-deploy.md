@@ -54,8 +54,8 @@ dependencies:
 8. Correct namespace stamping for Dex, Alloy, and Kubernetes Dashboard.
 9. Apply MySQL, the app, and MySQL backup resources.
 10. Wait for the app rollout.
-11. Patch public nip.io hostnames and switch ingresses to Let's Encrypt when
-    `NIPIO=1`.
+11. Patch public nip.io hostnames and switch ingresses to Let's Encrypt (on by
+    default — set `NIPIO=0` to opt out and keep `.local` + internal-ca).
 12. Apply deny-by-default NetworkPolicies last.
 13. Restart ingress-nginx and probe public service routes.
 14. Print cluster health, ExternalSecret status, and browser URLs.
@@ -90,8 +90,8 @@ ingress hosts or service names.
 
 ## Public Hostnames
 
-When `NIPIO=1` and `INGRESS_PUBLIC_IP` is available, the script patches these
-ingresses:
+By default (`NIPIO=1`, the default) with `INGRESS_PUBLIC_IP` available, the
+script patches these ingresses:
 
 | Service | Host |
 | --- | --- |
@@ -101,9 +101,13 @@ ingresses:
 | ArgoCD | `argocd.<ip>.nip.io` |
 | Dex | `dex.<ip>.nip.io` |
 
-It also creates `kube-system/nip-io-ingress-ip` so the
-`nip-io-reconciler` CronJob can re-apply the same public host convention if a
-later GitOps or manual apply drifts back to the checked-in `.local` hosts.
+It also creates the `kube-system/nip-io-ingress-ip` ConfigMap so the
+`nip-io-reconciler` CronJob (`infrastructure/nip-io-reconciler/`) can re-apply
+the same public host convention on its own — it runs every 3 minutes,
+independent of this script, and self-heals any ingress that drifts back to the
+checked-in `.local` hosts (e.g. after a later GitOps sync or manual
+`kubectl apply` of the app/infra manifests). No manual re-patching is ever
+needed once this ConfigMap exists.
 
 ## Expected Checks
 

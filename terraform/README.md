@@ -35,8 +35,9 @@ terraform apply -var="ssh_ingress_cidr=<your-ip>/32"
 ```
 
 Key outputs: `control_plane_public_ip` (SSH here for kubeadm init),
-`control_plane_private_ip` (workers join this), `ingress_public_ip` (point
-`*.local` /etc/hosts here), `nodes` (per-node public/private IPs), and the
+`control_plane_private_ip` (workers join this), `ingress_public_ip` (the
+services are reachable at `<name>.<this-ip>.nip.io` — no `/etc/hosts` entry
+needed, see the repo README), `nodes` (per-node public/private IPs), and the
 private-key path `terraform/kubequest-key.pem` (gitignored).
 
 ```sh
@@ -63,8 +64,11 @@ sudo kubeadm init --pod-network-cidr=192.168.0.0/16 --apiserver-cert-extra-sans=
 # kubectl for ec2-user
 mkdir -p ~/.kube && sudo cp /etc/kubernetes/admin.conf ~/.kube/config && sudo chown $(id -u):$(id -g) ~/.kube/config
 
-# Calico CNI (nodes stay NotReady until this is applied)
-kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
+# Flannel CNI (nodes stay NotReady until this is applied). Flannel's default
+# pod CIDR is 10.244.0.0/16 — patch it to match --pod-network-cidr above.
+curl -sSL https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml -o /tmp/flannel.yml
+sed -i 's#10.244.0.0/16#192.168.0.0/16#g' /tmp/flannel.yml
+kubectl apply -f /tmp/flannel.yml
 ```
 
 > **Why `--apiserver-cert-extra-sans`:** kubeadm's API cert defaults to the
@@ -73,6 +77,19 @@ kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/
 > `x509: certificate is valid for 10.x.x.x, not <public-ip>`. Adding it at init
 > time is the clean fix. (If you forget, you can regenerate the apiserver cert
 > later, but it's easier to get right now.)
+
+> **Why Flannel, and why `source_dest_check = false` matters (compute.tf):**
+> AWS drops any packet whose source/destination IP isn't the instance's own —
+> which is exactly what CNI overlay traffic (VXLAN) and pod-to-pod networking
+> look like. Without `source_dest_check = false` on every instance (already set
+> in `compute.tf`), cross-node pod networking silently fails: pods on the same
+> node work fine, but the ingress controller can't reach an app pod scheduled
+> on a *different* node (504/timeout) — the exact symptom that cost real time
+> to diagnose. We use Flannel over Calico here because Calico's on-disk CNI
+> config (`/etc/cni/net.d/10-calico.conflist`) isn't removed by deleting its
+> DaemonSet and can shadow a replacement CNI; Flannel is simpler and reliable
+> on EC2 once `source_dest_check` is off. `scripts/cluster-up.sh` automates all
+> of the above end-to-end.
 
 `kubeadm init` prints a `kubeadm join <cp-private-ip>:6443 --token ... --discovery-token-ca-cert-hash ...`
 command — **copy it**, you need it for the workers.

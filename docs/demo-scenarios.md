@@ -5,15 +5,24 @@ that fit the available time.
 
 ## Hostname Note
 
-Some scripts use `Host: crementation.local` internally because the checked-in
-Ingress starts with `.local` hosts. If the deployment has been patched to
-nip.io hosts, prefer direct commands against:
+Every service is reachable at `https://<name>.<ingress-ip>.nip.io` — nip.io is
+free public wildcard DNS, so this resolves with **zero client setup** (no
+`/etc/hosts` entry needed) from any machine, including the examiners'. Certs
+are real, browser-trusted Let's Encrypt (not self-signed) since nip.io is a
+real public domain. A CronJob (`nip-io-reconciler`, in `kube-system`, checks
+every 3 minutes) keeps this wired up automatically even if a manifest re-apply
+ever reverts an ingress back to its committed `.local` default — nothing to
+patch by hand.
+
+All the demo scripts below (`load-test.sh`, `failure-demo.sh`,
+`zero-downtime-test.sh`) take the hostname as a plain argument, e.g.:
 
 ```text
-https://crementation.<ingress-ip>.nip.io
+crementation.<ingress-ip>.nip.io
 ```
 
-or adjust the Host header manually for the demo command you run.
+Get `<ingress-ip>` from `terraform output ingress_public_ip` or
+`scripts/cluster-up.sh`'s final output.
 
 ## Autoscaling Demo
 
@@ -26,17 +35,14 @@ kubectl -n crementation get hpa crementation --watch
 kubectl -n crementation get pods --watch
 ```
 
-If using `.local` host routing, run:
-
 ```sh
-./scripts/load-test.sh <ingress-ip-or-hostname> 180s 50
+./scripts/load-test.sh crementation.<ingress-ip>.nip.io 180 50
 ```
 
-If using nip.io directly:
-
-```sh
-hey -z 180s -c 50 https://crementation.<ingress-ip>.nip.io/
-```
+(No `hey`/`ab`/`wrk` to install — the script is plain bash + curl, and drives
+`/api/debug/burn-cpu` directly rather than hammering `/`, since the counter
+page is too cheap to reliably push real CPU past the HPA's 70% threshold.
+Requires `DEBUG_ENDPOINTS_ENABLED=true` — see the CPU Pressure Demo below.)
 
 Explain:
 
@@ -49,19 +55,16 @@ Explain:
 
 Goal: create deterministic CPU pressure through the debug endpoint.
 
-Prerequisite: set `DEBUG_ENDPOINTS_ENABLED=true` in `crementation/values.yaml`
-and re-apply the app.
-
-For `.local` script path:
+Prerequisite: enable the debug endpoints on the live deployment (don't commit
+this — it's a runtime flip, not a values.yaml change, so a normal deploy never
+ships with it on):
 
 ```sh
-./scripts/failure-demo.sh <ingress-ip-or-hostname> cpu 60
+kubectl -n crementation set env deploy/crementation DEBUG_ENDPOINTS_ENABLED=true
 ```
 
-For nip.io direct path:
-
 ```sh
-curl -sk https://crementation.<ingress-ip>.nip.io/api/debug/burn-cpu?seconds=60
+./scripts/failure-demo.sh crementation.<ingress-ip>.nip.io cpu 60
 ```
 
 Watch:
@@ -71,27 +74,17 @@ kubectl -n crementation top pods
 kubectl -n crementation describe hpa crementation
 ```
 
-Reset the debug flag to `false` after the demo.
+Reset the flag after the demo:
+`kubectl -n crementation set env deploy/crementation DEBUG_ENDPOINTS_ENABLED=false`
 
 ## Memory/OOM Demo
 
 Goal: show resource limits and OOMKilled behavior.
 
-Prerequisite: debug endpoints enabled.
-
-For `.local` script path:
+Prerequisite: debug endpoints enabled (see above).
 
 ```sh
-./scripts/failure-demo.sh <ingress-ip-or-hostname> memory 80
-```
-
-For nip.io direct path:
-
-```sh
-for i in $(seq 1 80); do
-  curl -sk "https://crementation.<ingress-ip>.nip.io/api/debug/leak-memory?mb=10"
-  sleep 1
-done
+./scripts/failure-demo.sh crementation.<ingress-ip>.nip.io memory 80
 ```
 
 Watch:
@@ -113,20 +106,11 @@ Goal: show application errors in Grafana logs.
 
 Prerequisite: debug endpoints enabled.
 
-For `.local` script path:
-
 ```sh
-./scripts/failure-demo.sh <ingress-ip-or-hostname> crash
+./scripts/failure-demo.sh crementation.<ingress-ip>.nip.io crash
 ```
 
-For nip.io direct path:
-
-```sh
-curl -sk -o /dev/null -w '%{http_code}\n' \
-  https://crementation.<ingress-ip>.nip.io/api/debug/crash
-```
-
-Open Grafana and show:
+Open Grafana (`https://grafana.<ingress-ip>.nip.io`) and show:
 
 - log stream filtered by app pod;
 - error-level logs;
@@ -139,7 +123,7 @@ Goal: show that rolling updates do not drop requests.
 Terminal 1:
 
 ```sh
-./scripts/zero-downtime-test.sh <ingress-ip-or-hostname> 60
+./scripts/zero-downtime-test.sh crementation.<ingress-ip>.nip.io 60
 ```
 
 Terminal 2:
@@ -155,16 +139,6 @@ Explain:
 - `maxSurge: 1`;
 - readiness probe gates traffic;
 - `minReadySeconds` avoids instantly accepting a barely-ready pod.
-
-If using nip.io and the script Host header no longer matches the live ingress,
-use a simple loop instead:
-
-```sh
-for i in $(seq 1 120); do
-  curl -sk -o /dev/null -w "%{http_code}\n" https://crementation.<ingress-ip>.nip.io/
-  sleep 0.5
-done
-```
 
 ## Rollback Demo
 
@@ -192,7 +166,7 @@ Goal: show PDB protection during voluntary disruption.
 Terminal 1:
 
 ```sh
-./scripts/zero-downtime-test.sh <ingress-ip-or-hostname> 90
+./scripts/zero-downtime-test.sh crementation.<ingress-ip>.nip.io 90
 ```
 
 Terminal 2:

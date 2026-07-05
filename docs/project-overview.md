@@ -85,12 +85,18 @@ apply on a fresh cluster.
 ## Traffic Flow
 
 External traffic enters through ingress-nginx on the `ingress` node. The
-default checked-in hostnames are local names such as `crementation.local`,
-`grafana.local`, `dashboard.local`, `argocd.local`, and `dex.local`.
+committed chart defaults are local names such as `crementation.local`,
+`grafana.local`, `dashboard.local`, `argocd.local`, and `dex.local` — but the
+deploy flow always rewrites these at deploy time.
 
-The deployment script can patch those to `<service>.<ingress-ip>.nip.io` and
-switch certificates to `letsencrypt-prod`, which gives public DNS and trusted
-browser certificates without a hosts-file setup.
+`scripts/deploy.sh` (step 8.5) patches every ingress to
+`<service>.<ingress-ip>.nip.io` and switches its cert-manager issuer to
+`letsencrypt-prod`, giving public DNS and trusted browser certificates with
+zero client setup (no hosts file, works from any machine). A self-healing
+CronJob (`nip-io-reconciler`, `infrastructure/nip-io-reconciler/`, in
+`kube-system`) re-checks every 3 minutes and corrects any ingress that drifts
+back to the `.local`/self-signed defaults — e.g. after a later manifest
+re-apply — so this stays correct with no manual intervention.
 
 The application ingress forwards to the `crementation` Service, which balances
 traffic across app pods. Dashboard, Grafana, and ArgoCD are protected by
