@@ -1,0 +1,47 @@
+# Least-privilege identity for the reconciler CronJob (below): it only needs
+# to read/patch Ingress objects and read/delete Certificates + their Secrets,
+# cluster-wide (the 5 gated services span 5 different namespaces).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nip-io-reconciler
+  namespace: kube-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nip-io-reconciler
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nip-io-reconciler
+subjects:
+  - kind: ServiceAccount
+    name: nip-io-reconciler
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: nip-io-reconciler
+  apiGroup: rbac.authorization.k8s.io

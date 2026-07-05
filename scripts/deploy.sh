@@ -163,6 +163,13 @@ if [ "${NIPIO:-1}" = "1" ]; then
     echo "  ! could not auto-detect the ingress public IP; skipping nip.io."
     echo "    Re-run with INGRESS_PUBLIC_IP=<ingress-EIP> to enable it."
   else
+    # Publish the IP for the self-healing nip-io-reconciler CronJob (installed
+    # as part of the infrastructure apply above) — it reads this ConfigMap on
+    # every run and re-patches any ingress that drifts back to *.local /
+    # internal-ca (e.g. from a later manual re-apply of the app/infra
+    # manifests). This is what makes the fix permanent instead of one-shot.
+    kubectl -n kube-system create configmap nip-io-ingress-ip --from-literal=ip="$IP" \
+      --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
     # host:ingress:namespace  (svc = the nip.io subdomain label)
     for e in "crementation:crementation:crementation" "grafana:prometheus-grafana:monitoring" \
              "dashboard:kubernetes-dashboard:dashboard" "argocd:argocd-server:argocd" "dex:dex:auth"; do

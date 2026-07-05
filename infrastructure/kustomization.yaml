@@ -27,6 +27,9 @@ resources:
   - monitoring/prometheus/rbac.yaml
   - monitoring/prometheus/alert-rules.yaml
   - monitoring/dashboards
+  # Self-healing nip.io hostname + Let's Encrypt reconciler (CronJob, every
+  # 3 min) — see nip-io-reconciler/cronjob.yaml for why this exists.
+  - nip-io-reconciler
   # The VPA custom resource — needs the VPA chart's CRD (below) to exist first,
   # so on a first apply this may need a re-run (same pattern as the other CRD-
   # backed resources here).

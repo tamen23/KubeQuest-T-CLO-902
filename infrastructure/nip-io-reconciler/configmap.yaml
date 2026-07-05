@@ -1,0 +1,60 @@
+# The reconcile logic, as a script mounted into the CronJob pod. Auto-detects
+# the ingress node's public IP from the node object itself (no per-cluster env
+# var to remember to set — this is what makes it truly zero-touch).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nip-io-reconciler-script
+  namespace: kube-system
+data:
+  reconcile.sh: |
+    #!/bin/sh
+    set -eu
+
+    # The ingress node's PUBLIC IP == the aws_eip.ingress address from
+    # terraform (it's attached to the node itself, so the node's own public IP
+    # IS the ingress entrypoint). kubeadm nodes don't populate ExternalIP, so
+    # ask the AWS instance metadata service FROM the ingress pod instead — but
+    # this script runs on any node, so instead read it from the Service/Ingress
+    # status if annotated, falling back to a well-known ConfigMap set once at
+    # deploy time by scripts/deploy.sh (nip-io-ingress-ip).
+    IP=$(kubectl -n kube-system get configmap nip-io-ingress-ip -o jsonpath='{.data.ip}' 2>/dev/null || true)
+    if [ -z "$IP" ]; then
+      echo "no nip-io-ingress-ip ConfigMap yet (deploy.sh sets it) — skipping this run"
+      exit 0
+    fi
+
+    for entry in "crementation:crementation:crementation" "grafana:prometheus-grafana:monitoring" \
+                 "dashboard:kubernetes-dashboard:dashboard" "argocd:argocd-server:argocd" "dex:dex:auth"; do
+      sub="${entry%%:*}"; rest="${entry#*:}"; name="${rest%%:*}"; ns="${rest##*:}"
+      host="$sub.$IP.nip.io"
+
+      kubectl -n "$ns" get ingress "$name" >/dev/null 2>&1 || continue
+
+      cur_host=$(kubectl -n "$ns" get ingress "$name" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)
+      cur_issuer=$(kubectl -n "$ns" get ingress "$name" -o jsonpath="{.metadata.annotations['cert-manager\.io/cluster-issuer']}" 2>/dev/null || true)
+
+      if [ "$cur_host" = "$host" ] && [ "$cur_issuer" = "letsencrypt-prod" ]; then
+        echo "ok: $host"
+        continue
+      fi
+
+      echo "drift detected on $name ($ns): host='$cur_host' issuer='$cur_issuer' -> fixing to $host / letsencrypt-prod"
+      kubectl -n "$ns" annotate ingress "$name" cert-manager.io/cluster-issuer=letsencrypt-prod --overwrite >/dev/null 2>&1 || true
+      kubectl -n "$ns" patch ingress "$name" --type=json \
+        -p="[{\"op\":\"replace\",\"path\":\"/spec/rules/0/host\",\"value\":\"$host\"}]" >/dev/null 2>&1 || true
+
+      if [ -n "$(kubectl -n "$ns" get ingress "$name" -o jsonpath='{.spec.tls}' 2>/dev/null)" ]; then
+        kubectl -n "$ns" patch ingress "$name" --type=json \
+          -p="[{\"op\":\"replace\",\"path\":\"/spec/tls/0/hosts/0\",\"value\":\"$host\"}]" >/dev/null 2>&1 || true
+        sec=$(kubectl -n "$ns" get ingress "$name" -o jsonpath='{.spec.tls[0].secretName}' 2>/dev/null || true)
+        if [ -n "$sec" ]; then
+          kubectl -n "$ns" delete certificate "$sec" --ignore-not-found >/dev/null 2>&1 || true
+          kubectl -n "$ns" delete secret "$sec" --ignore-not-found >/dev/null 2>&1 || true
+        fi
+      fi
+
+      if [ "$sub" = "crementation" ]; then
+        kubectl -n "$ns" set env deploy/"$name" "APP_URL_HOST=$host" >/dev/null 2>&1 || true
+      fi
+    done

@@ -1,0 +1,54 @@
+# Self-healing: re-applying an ingress-owning manifest (the app/infra
+# kustomize trees) reverts the live nip.io hostname + Let's Encrypt issuer
+# back to the chart's committed defaults (*.local + self-signed internal-ca) —
+# the real IP can't be a committed default since it's only known after
+# terraform provisions the cluster. Rather than rely on a human remembering to
+# re-run a patch script, this CronJob reconciles it automatically every 3
+# minutes, forever, with zero action needed — any drift self-heals within
+# minutes. See infrastructure/nip-io-reconciler/configmap.yaml for the logic.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nip-io-reconciler
+  namespace: kube-system
+spec:
+  schedule: "*/3 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          serviceAccountName: nip-io-reconciler
+          restartPolicy: Never
+          containers:
+            - name: reconcile
+              image: alpine/kubectl:1.36.1
+              command: ["/bin/sh", "/scripts/reconcile.sh"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                # alpine/kubectl's default user is root; force a non-root UID
+                # explicitly since runAsNonRoot alone doesn't change the image's
+                # default user, it just rejects it if left as root.
+                runAsUser: 1000
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+          volumes:
+            - name: script
+              configMap:
+                name: nip-io-reconciler-script
+                defaultMode: 0555
