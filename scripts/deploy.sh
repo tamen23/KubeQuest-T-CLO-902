@@ -179,6 +179,11 @@ if [ "${NIPIO:-1}" = "1" ]; then
         kubectl -n "$ns" delete certificate "$sec" secret "$sec" >/dev/null 2>&1  # force LE re-issue
       fi
       echo "  $host -> letsencrypt-prod"
+      # keep the app's own APP_URL in sync with its real public hostname (used
+      # for generated links/assets) — only meaningful for the app itself.
+      if [ "$sub" = "crementation" ]; then
+        kubectl -n "$ns" set env deploy/"$name" "APP_URL_HOST=$host" >/dev/null 2>&1
+      fi
     done
     ok "nip.io hostnames + Let's Encrypt (certs issue over the next ~1 min)"
   fi

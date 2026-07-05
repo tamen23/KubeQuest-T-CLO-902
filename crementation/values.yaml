@@ -62,8 +62,18 @@ args:
     chmod -R 777 /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
     # Create the app tables in the BACKGROUND (retrying until MySQL is ready),
     # so Apache can start serving immediately and the liveness probe passes —
-    # otherwise migrate blocks the container long enough to get killed.
-    ( for i in 1 2 3 4 5 6 7 8 9; do php artisan migrate --force && break || sleep 10; done ) &
+    # otherwise migrate blocks the container long enough to get killed. Log the
+    # outcome so a stuck/failing migration is visible in `kubectl logs`
+    # instead of failing silently forever.
+    ( ok=0; for i in 1 2 3 4 5 6 7 8 9; do
+        if php artisan migrate --force; then ok=1; break; fi
+        echo "[migrate] attempt $i failed, retrying in 10s..." >&2
+        sleep 10
+      done
+      if [ "$ok" = "1" ]; then echo "[migrate] succeeded" >&2
+      else echo "[migrate] GAVE UP after 9 attempts — DB may be unreachable, check MySQL" >&2
+      fi
+    ) &
     exec apache2-foreground
 
 # DB_HOST / DB_DATABASE / DB_USERNAME / DB_PASSWORD / APP_KEY, sourced from
