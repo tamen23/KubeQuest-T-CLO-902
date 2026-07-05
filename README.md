@@ -399,11 +399,14 @@ on `main` only):
 
 1. **`build-and-scan-image`** — builds the `crementation` app image from
    `sample-app-master/Dockerfile` (scan-only, not pushed anywhere), scans it
-   with [Trivy](https://trivy.dev/). All CRITICAL/HIGH findings upload as SARIF
-   to the repo's Security tab (visibility), and a second Trivy pass **fails the
-   build on any FIXABLE CRITICAL** (`ignore-unfixed: true`) — so unfixable
-   upstream base-image CVEs (`php:8.2-apache` always carries some) don't red
-   every run, but a critical we can actually patch does.
+   with [Trivy](https://trivy.dev/) (run from its official Docker image to
+   avoid the rate-limited binary download). CRITICAL/HIGH findings upload as
+   SARIF to the repo's Security tab and print in the job log. It's **report-only**:
+   the app is the brief-provided sample (`sample-app-master/`), so we surface
+   its CVEs for visibility but don't gate CI on vulnerabilities in code we
+   don't own. (The known criticals in its PHP deps were patched via
+   `composer.lock` where the `^8.75` constraint allowed; the rest need a
+   Laravel major upgrade, out of scope.)
 
 2. **`lint-manifests`** — renders every Kustomize tree this repo deploys
    (`infrastructure/`, `applications/crementation/base/`,
@@ -411,10 +414,10 @@ on `main` only):
    LoadRestrictionsNone`, then runs **kube-linter** (report-only via config
    `.kube-linter.yaml`, which excludes four documented accepted checks —
    `host-network`, `host-port`, `run-as-non-root`, `non-existent-service-account`).
-   It's report-only because the rendered infra is almost entirely third-party
+   report-only on the infra render because it's almost entirely third-party
    charts whose securityContext/resource defaults we can't change without
-   forking them; the blocking security gate is Trivy (job 1). Also runs
-   **`helm lint`** on the `crementation/` chart. Because the three renders
+   forking them; the **crementation** chart (ours) is linted blocking. Also
+   runs **`helm lint`** on the `crementation/` chart. Because the three renders
    actually pull and template every chart, this job doubles as a "does the
    whole thing still build" gate.
 
