@@ -32,6 +32,17 @@ for v in GH_ID GH_SECRET DH_TOKEN AWS_KEY AWS_SECRET; do
   [ -n "${!v:-}" ] || { echo "export $v=... before running (seeds Vault once)"; exit 1; }
 done
 
+# --- 0. tooling (a fresh kubeadm node has kubectl but not helm/kustomize) -----
+say "Tooling (helm, kustomize)"
+if ! command -v helm >/dev/null; then
+  curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sudo bash >/dev/null 2>&1
+fi
+if ! command -v kustomize >/dev/null; then
+  curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash >/dev/null 2>&1
+  sudo mv kustomize /usr/local/bin/ 2>/dev/null || true
+fi
+ok "helm $(helm version --short 2>/dev/null), kustomize $(kustomize version 2>/dev/null)"
+
 # --- 1. namespaces -----------------------------------------------------------
 say "Namespaces"
 for ns in crementation ingress-nginx dashboard monitoring vault external-secrets-system \
@@ -104,7 +115,7 @@ say "Namespace fix: dex -> auth, alloy -> monitoring, dashboard -> dashboard"
 helm repo add dex https://charts.dexidp.io >/dev/null 2>&1 || true
 helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
 helm repo update >/dev/null 2>&1
-helm template dex dex/dex --version 0.19.1 -n auth -f infrastructure/dex/values.yaml 2>/dev/null | kubectl apply -n auth $( : ) --server-side --force-conflicts -f - >/dev/null 2>&1
+helm template dex dex/dex --version 0.19.1 -n auth -f infrastructure/dex/values.yaml 2>/dev/null | kubectl apply -n auth --server-side --force-conflicts -f - >/dev/null 2>&1
 helm template alloy grafana/alloy --version 0.11.0 -n monitoring -f infrastructure/monitoring/loki/values-alloy.yaml 2>/dev/null | kubectl apply -n monitoring --server-side --force-conflicts -f - >/dev/null 2>&1
 helm template dashboard infrastructure/charts/kubernetes-dashboard -n dashboard -f infrastructure/dashboard/values.yaml 2>/dev/null | kubectl apply -n dashboard --server-side --force-conflicts -f - >/dev/null 2>&1
 # remove any copies that landed in default on a prior kustomize apply

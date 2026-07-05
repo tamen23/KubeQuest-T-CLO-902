@@ -29,8 +29,23 @@ ok()  { printf '\033[1;32m  ✓ %s\033[0m\n' "$1"; }
 
 # --- 1. provision the 4 nodes ------------------------------------------------
 say "Terraform apply (4 nodes + VPC + 2 EIPs)"
+# Clear any stale key file first: Terraform can't overwrite a read-only .pem
+# left by a previous run ("Access is denied" on Windows). Remove attrs + file.
+if [ -f "$KEY" ]; then
+  chmod u+w "$KEY" 2>/dev/null || true
+  command -v attrib.exe >/dev/null && attrib.exe -R "$(cygpath -w "$KEY" 2>/dev/null || echo "$KEY")" 2>/dev/null || true
+  rm -f "$KEY" 2>/dev/null || true
+fi
 ( cd "$TF" && terraform init -input=false >/dev/null && terraform apply -auto-approve -var="ssh_ingress_cidr=0.0.0.0/0" )
-ok "infrastructure applied"
+# Lock the freshly-written key so SSH accepts it (Windows: icacls; Unix: chmod).
+if command -v icacls.exe >/dev/null 2>&1; then
+  KEY_WIN="$(cygpath -w "$KEY" 2>/dev/null || echo "$KEY")"
+  icacls.exe "$KEY_WIN" /inheritance:r >/dev/null 2>&1 || true
+  icacls.exe "$KEY_WIN" /grant:r "$(whoami):(R)" >/dev/null 2>&1 || true
+else
+  chmod 600 "$KEY" 2>/dev/null || true
+fi
+ok "infrastructure applied + key locked"
 
 # read outputs
 CP_IP=$(cd "$TF" && terraform output -raw control_plane_public_ip)

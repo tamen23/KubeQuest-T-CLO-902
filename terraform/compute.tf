@@ -15,13 +15,12 @@ resource "aws_key_pair" "node" {
 resource "local_sensitive_file" "private_key" {
   content  = tls_private_key.node.private_key_pem
   filename = "${path.module}/${var.project}-key.pem"
-  # 0600 (not 0400): on Windows, Terraform's local_sensitive_file fails to
-  # write a 0400 (read-only) file with "Access is denied" because it can't
-  # reopen the handle it just chmod'd. 0600 writes cleanly and OpenSSH still
-  # accepts it (it only rejects group/world-readable keys). On Windows you
-  # additionally lock it down with:
-  #   icacls kubequest-key.pem /inheritance:r /grant:r "$($env:USERNAME):(R)"
-  file_permission = "0600"
+  # NO file_permission set: on Windows, Terraform's local_sensitive_file fails
+  # with "Access is denied" when it tries to reopen a file it just chmod'd to a
+  # restrictive mode (0400/0600) — AND a stale read-only .pem from a prior run
+  # blocks the overwrite entirely. So let Terraform write with OS defaults
+  # (always succeeds), then lock the key down out-of-band. scripts/cluster-up.sh
+  # deletes any stale key first and runs `icacls` after; on Unix, chmod 600.
 }
 
 # --- EC2 nodes ---------------------------------------------------------------
