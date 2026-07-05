@@ -408,13 +408,15 @@ on `main` only):
 2. **`lint-manifests`** — renders every Kustomize tree this repo deploys
    (`infrastructure/`, `applications/crementation/base/`,
    `applications/mysql/`) via `kustomize build --enable-helm --load-restrictor
-   LoadRestrictionsNone`, then runs **kube-linter** (**blocking** — config
-   `.kube-linter.yaml` excludes four documented, accepted checks:
-   `host-network`, `host-port`, `run-as-non-root`, `non-existent-service-account`,
-   each justified in Security review below; any *other* finding fails the job)
-   and **`helm lint`** against the `crementation/` chart source. Because the
-   three renders actually pull and template every chart, this job doubles as a
-   "does the whole thing still build" gate.
+   LoadRestrictionsNone`, then runs **kube-linter** (report-only via config
+   `.kube-linter.yaml`, which excludes four documented accepted checks —
+   `host-network`, `host-port`, `run-as-non-root`, `non-existent-service-account`).
+   It's report-only because the rendered infra is almost entirely third-party
+   charts whose securityContext/resource defaults we can't change without
+   forking them; the blocking security gate is Trivy (job 1). Also runs
+   **`helm lint`** on the `crementation/` chart. Because the three renders
+   actually pull and template every chart, this job doubles as a "does the
+   whole thing still build" gate.
 
 3. **`network-policy-check`** — a repo-structure check confirming every
    namespace that's supposed to have a deny-by-default NetworkPolicy still
