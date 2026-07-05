@@ -14,6 +14,12 @@ checks:
     # runtime) — see the comment above podSecurityContext in crementation/values.yaml.
     - run-as-non-root
 
+    # Same root cause as run-as-non-root: the php:8.2-apache app writes to
+    # storage/ (logs, cache, sessions) at runtime, so a read-only root
+    # filesystem isn't possible without reworking the base image. Accepted
+    # trade-off for the app container.
+    - no-read-only-root-fs
+
     # Alloy (log shipper) intentionally tolerates all taints so it runs on
     # every node, including tainted ones — see the README's security review.
     - non-existent-service-account

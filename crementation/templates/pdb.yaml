@@ -6,6 +6,11 @@ metadata:
   labels:
     {{- include "crementation.labels" . | nindent 4 }}
 spec:
+  # AlwaysAllow: if an app pod is already unhealthy (not Ready), let it be
+  # evicted during a disruption even if that would breach minAvailable — a
+  # broken pod shouldn't block a node drain. (Default IfHealthyBudget can
+  # deadlock a drain when a pod is stuck.)
+  unhealthyPodEvictionPolicy: AlwaysAllow
   # Keep at least this many app pods available during voluntary disruptions
   # (node drain, cluster upgrade). With 2+ replicas and minAvailable: 1, a
   # `kubectl drain` on one node evicts the app pod there but blocks until a

@@ -26,26 +26,20 @@ jobs:
           tags: crementation-app:ci
           load: true
 
-      - name: Scan image with Trivy (SARIF for the Security tab — report all)
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: crementation-app:ci
-          format: sarif
-          output: trivy-image-results.sarif
-          severity: CRITICAL,HIGH
-          exit-code: "0" # this pass only uploads findings; the gate is the next step
+      # Install Trivy ONCE via its official installer, then run the CLI directly.
+      # (Running the trivy-action three times re-downloaded the binary each time
+      # and hit GitHub's unauthenticated rate limit — the CLI approach installs
+      # once and is immune to that.)
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin v0.65.0
+          trivy --version
 
-      - name: Fail on FIXABLE CRITICAL CVEs
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: crementation-app:ci
-          format: table
-          severity: CRITICAL
-          # ignore-unfixed: the php:8.2-apache base image always carries some
-          # upstream CVEs with no fix available — those shouldn't red every run.
-          # But a CRITICAL that HAS a fix is our responsibility, so gate on it.
-          ignore-unfixed: true
-          exit-code: "1"
+      - name: Trivy — SARIF for the Security tab (report all CRITICAL/HIGH)
+        run: |
+          trivy image --scanners vuln --format sarif --output trivy-image-results.sarif \
+            --severity CRITICAL,HIGH --exit-code 0 crementation-app:ci
 
       - name: Upload Trivy results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
@@ -53,14 +47,19 @@ jobs:
         with:
           sarif_file: trivy-image-results.sarif
 
-      - name: Human-readable summary
+      - name: Trivy — human-readable summary (all CRITICAL/HIGH, non-blocking)
         if: always()
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: crementation-app:ci
-          format: table
-          severity: CRITICAL,HIGH
-          exit-code: "0"
+        run: |
+          trivy image --scanners vuln --format table --severity CRITICAL,HIGH \
+            --exit-code 0 crementation-app:ci
+
+      - name: Trivy — FAIL on FIXABLE CRITICAL CVEs (the gate)
+        run: |
+          # ignore-unfixed: the php:8.2-apache base always carries some upstream
+          # CVEs with no fix — those shouldn't red every run. But a CRITICAL we
+          # CAN patch is our responsibility, so fail on it.
+          trivy image --scanners vuln --format table --severity CRITICAL \
+            --ignore-unfixed --exit-code 1 crementation-app:ci
 
   lint-manifests:
     name: Lint Kubernetes manifests + Helm charts
@@ -91,15 +90,24 @@ jobs:
           sudo mv kube-linter /usr/local/bin/
 
       # kube-linter is REPORT-ONLY (|| true): the rendered infra is ~100%
-      # third-party charts (Grafana, ArgoCD, node-exporter, cert-manager Jobs,
-      # …) whose securityContext/resource defaults we can't change without
-      # forking every chart, so gating on them is noise. Findings are still
-      # printed for visibility. The blocking security gate is Trivy above
-      # (fails on fixable CRITICAL CVEs); this surfaces manifest hygiene.
-      - name: Lint rendered manifests (kube-linter, report-only)
+      # kube-linter runs in two passes with different strictness:
+      #   - infrastructure + mysql: REPORT-ONLY. These renders are chart-driven
+      #     (Grafana, ArgoCD, node-exporter, cert-manager, the Bitnami MySQL
+      #     chart, …) — their securityContext/resource defaults we can't change
+      #     without forking the charts, so gating on them is noise. Findings are
+      #     still printed for visibility.
+      #   - crementation: BLOCKING. That's OUR Helm chart, fully under our
+      #     control, so any NEW hygiene regression there fails CI. The two
+      #     remaining accepted findings are excluded in .kube-linter.yaml with
+      #     justification (run-as-non-root + no-read-only-root-fs: the
+      #     php:8.2-apache app runs apache as root and writes to storage/).
+      - name: kube-linter — infrastructure + mysql (report-only, chart-driven)
         run: |
-          kube-linter lint rendered-infrastructure.yaml rendered-crementation.yaml rendered-mysql.yaml \
+          kube-linter lint rendered-infrastructure.yaml rendered-mysql.yaml \
             --config .kube-linter.yaml || true
+
+      - name: kube-linter — crementation (blocking, our chart)
+        run: kube-linter lint rendered-crementation.yaml --config .kube-linter.yaml
 
       - name: Helm lint (crementation chart)
         run: helm lint crementation/
