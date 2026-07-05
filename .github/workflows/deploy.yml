@@ -1,0 +1,152 @@
+name: Deploy (seed Vault + hand off to ArgoCD)
+
+# Manual trigger only — click "Run workflow" in the Actions tab once the
+# 4-node cluster is up. This is the "you type no secrets at deploy" path:
+# every value is read from GitHub repo secrets, seeded into Vault, and ESO
+# takes it from there. Zero secret typing at deploy time.
+#
+# REQUIRED GitHub repo secrets (Settings -> Secrets and variables -> Actions),
+# each set ONCE in the browser, reused every deploy:
+#   KUBECONFIG_B64        base64 of the cluster kubeconfig (server = control-plane PUBLIC ip)
+#   GH_CLIENT_ID          GitHub OAuth app client id (for Dex)
+#   GH_CLIENT_SECRET      GitHub OAuth app client secret
+#   DOCKERHUB_USERNAME    Docker Hub user (maxi2)  [already set for CI]
+#   DOCKERHUB_TOKEN       Docker Hub access token  [already set for CI]
+#   AWS_ACCESS_KEY_ID     AWS key for Velero -> S3
+#   AWS_SECRET_ACCESS_KEY AWS secret for Velero -> S3
+#
+# Everything else (DB passwords, cookie secret, APP_KEY) is generated here and
+# stored only in Vault.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ingress_node:
+        description: "Node name to label as ingress (optional)"
+        required: false
+      monitoring_node:
+        description: "Node name to label as monitoring (optional)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Seed Vault + hand off to ArgoCD
+    runs-on: ubuntu-latest
+    env:
+      VAULT_NS: vault
+      VAULT_POD: vault-0
+      ESO_NS: external-secrets-system
+      ESO_SA: external-secrets
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubectl, helm, kustomize
+        run: |
+          curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Configure cluster access (kubeconfig from secret)
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl get nodes -o wide
+
+      - name: Namespaces + optional node labels
+        run: |
+          for ns in crementation ingress-nginx dashboard monitoring vault external-secrets-system \
+                    auth gatekeeper-system cert-manager argocd velero vpa; do
+            kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+          done
+          [ -n "${{ inputs.ingress_node }}" ]    && kubectl label node "${{ inputs.ingress_node }}"    node-role.kubernetes.io/ingress=ingress       --overwrite || true
+          [ -n "${{ inputs.monitoring_node }}" ] && kubectl label node "${{ inputs.monitoring_node }}" node-role.kubernetes.io/monitoring=monitoring --overwrite || true
+
+      - name: Install + init + unseal Vault
+        id: vault
+        run: |
+          helm repo add hashicorp https://helm.releases.hashicorp.com >/dev/null
+          helm repo update hashicorp >/dev/null
+          helm upgrade --install vault hashicorp/vault --version 0.28.1 -n "$VAULT_NS" \
+            -f infrastructure/vault/values.yaml >/dev/null
+          kubectl -n "$VAULT_NS" wait --for=jsonpath='{.status.phase}'=Running pod/"$VAULT_POD" --timeout=180s || true
+
+          if kubectl -n "$VAULT_NS" exec "$VAULT_POD" -- vault status 2>/dev/null | grep -q 'Initialized.*true'; then
+            echo "Vault already initialized."
+            if [ -z "${{ secrets.VAULT_UNSEAL_KEY }}" ] || [ -z "${{ secrets.VAULT_ROOT_TOKEN }}" ]; then
+              echo "::error::Vault is already initialized but VAULT_UNSEAL_KEY / VAULT_ROOT_TOKEN secrets are not set."; exit 1
+            fi
+            UNSEAL="${{ secrets.VAULT_UNSEAL_KEY }}"; ROOT="${{ secrets.VAULT_ROOT_TOKEN }}"
+          else
+            INIT="$(kubectl -n "$VAULT_NS" exec "$VAULT_POD" -- vault operator init -key-shares=1 -key-threshold=1)"
+            UNSEAL="$(echo "$INIT" | awk '/Unseal Key 1:/{print $NF}')"
+            ROOT="$(echo "$INIT" | awk '/Initial Root Token:/{print $NF}')"
+            echo "::warning::Vault was freshly initialized. SAVE these as repo secrets VAULT_UNSEAL_KEY + VAULT_ROOT_TOKEN so re-runs against this same Vault work (printed to the masked log below)."
+            echo "::add-mask::$UNSEAL"; echo "::add-mask::$ROOT"
+            echo "NEW_VAULT_UNSEAL_KEY=$UNSEAL"
+            echo "NEW_VAULT_ROOT_TOKEN=$ROOT"
+          fi
+          echo "::add-mask::$UNSEAL"; echo "::add-mask::$ROOT"
+          kubectl -n "$VAULT_NS" exec "$VAULT_POD" -- vault operator unseal "$UNSEAL" >/dev/null
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$ROOT"
+
+      - name: Vault — kv engine, ESO policy, Kubernetes auth
+        env:
+          ROOT: ${{ steps.vault.outputs.root }}
+        run: |
+          vr() { kubectl -n "$VAULT_NS" exec "$VAULT_POD" -- sh -c "export VAULT_TOKEN='$ROOT'; $*"; }
+          vr "vault secrets enable -path=secret kv-v2 2>/dev/null || true"
+          vr "echo 'path \"secret/data/*\" { capabilities = [\"read\"] }' | vault policy write external-secrets-read -"
+          vr "vault auth enable kubernetes 2>/dev/null || true"
+          vr "vault write auth/kubernetes/config kubernetes_host=https://kubernetes.default.svc:443"
+          vr "vault write auth/kubernetes/role/external-secrets \
+                bound_service_account_names=$ESO_SA \
+                bound_service_account_namespaces=$ESO_NS \
+                policy=external-secrets-read ttl=1h"
+
+      - name: Vault — seed all secrets (from GitHub secrets + generated)
+        env:
+          ROOT: ${{ steps.vault.outputs.root }}
+          GH_CLIENT_ID: ${{ secrets.GH_CLIENT_ID }}
+          GH_CLIENT_SECRET: ${{ secrets.GH_CLIENT_SECRET }}
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          AWS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          gen() { openssl rand -base64 24 | tr -d '/+=' | head -c 24; }
+          DB_PASSWORD="$(gen)"; DB_ROOT_PASSWORD="$(gen)"; DB_REPLICATION_PASSWORD="$(gen)"
+          O2_CLIENT_SECRET="$(gen)"; O2_COOKIE_SECRET="$(openssl rand -base64 32 | head -c 32)"
+          APP_KEY="base64:$(openssl rand -base64 32)"
+          for v in DB_PASSWORD DB_ROOT_PASSWORD DB_REPLICATION_PASSWORD O2_CLIENT_SECRET O2_COOKIE_SECRET APP_KEY; do
+            echo "::add-mask::${!v}"
+          done
+          vr() { kubectl -n "$VAULT_NS" exec "$VAULT_POD" -- sh -c "export VAULT_TOKEN='$ROOT'; $*"; }
+          vr "vault kv put secret/secret \
+                DB_HOST=mysql-primary.crementation.svc.cluster.local \
+                DB_DATABASE=app_database DB_USERNAME=app_user \
+                DB_PASSWORD='$DB_PASSWORD' DB_ROOT_PASSWORD='$DB_ROOT_PASSWORD' \
+                DB_REPLICATION_PASSWORD='$DB_REPLICATION_PASSWORD' APP_KEY='$APP_KEY'" >/dev/null
+          vr "vault kv put secret/dex \
+                OAUTH2_PROXY_CLIENT_ID=oauth2-proxy OAUTH2_PROXY_CLIENT_SECRET='$O2_CLIENT_SECRET' \
+                OAUTH2_PROXY_COOKIE_SECRET='$O2_COOKIE_SECRET' \
+                GITHUB_CLIENT_ID='$GH_CLIENT_ID' GITHUB_CLIENT_SECRET='$GH_CLIENT_SECRET'" >/dev/null
+          vr "vault kv put secret/dockerhub username='$DH_USER' token='$DH_TOKEN'" >/dev/null
+          vr "vault kv put secret/aws AWS_ACCESS_KEY_ID='$AWS_KEY' AWS_SECRET_ACCESS_KEY='$AWS_SECRET'" >/dev/null
+          echo "Vault seeded: secret/secret, secret/dex, secret/dockerhub, secret/aws"
+
+      - name: Install ArgoCD + hand off (Applications sync from main)
+        run: |
+          helm repo add argo https://argoproj.github.io/argo-helm >/dev/null
+          helm repo update argo >/dev/null
+          helm upgrade --install argocd argo/argo-cd --version 7.7.11 -n argocd \
+            -f infrastructure/argocd/values.yaml >/dev/null
+          kubectl -n argocd rollout status deploy/argocd-server --timeout=180s || true
+          kubectl apply -f infrastructure/argocd/argocd-apps.yaml
+          echo "ArgoCD is now syncing the whole stack from main. Watch: kubectl -n argocd get applications"
