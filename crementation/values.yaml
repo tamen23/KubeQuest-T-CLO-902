@@ -15,7 +15,7 @@ image:
   # v1.1.0 adds the /metrics endpoint (MetricsController + route) that the
   # ServiceMonitor scrapes. Built + pushed by the push-app-image CI job on
   # merge to main — keep this tag in sync with .github/workflows/ci.yml.
-  tag: v1.1.1
+  tag: v1.1.2
   pullPolicy: Always
 
 imagePullSecrets:

@@ -1,0 +1,12 @@
+.git
+tests
+docker-compose.yaml
+README.md
+README.pdf
+node_modules
+.env
+.env.example
+storage/logs/*
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*

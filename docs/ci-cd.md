@@ -98,7 +98,7 @@ This job runs only on push events to `main`, after validation jobs succeed.
 It builds and pushes:
 
 ```text
-maxi2/crementation-app:v1.1.1
+maxi2/crementation-app:v1.1.2
 maxi2/crementation-app:latest
 ```
 

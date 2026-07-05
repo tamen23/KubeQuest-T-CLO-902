@@ -176,7 +176,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     env:
       APP_IMAGE: maxi2/crementation-app
-      APP_IMAGE_TAG: v1.1.1 # keep in sync with crementation/values.yaml image.tag
+      APP_IMAGE_TAG: v1.1.2 # keep in sync with crementation/values.yaml image.tag
     steps:
       - uses: actions/checkout@v5
 

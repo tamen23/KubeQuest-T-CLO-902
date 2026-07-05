@@ -479,7 +479,7 @@ on `main` only):
 
 4. **`push-app-image`** (main only) — after the validation jobs pass, on a
    push to `main`, builds the app image and pushes it to Docker Hub as
-   `maxi2/crementation-app:v1.1.1` + `:latest`. This is what makes app code
+   `maxi2/crementation-app:v1.1.2` + `:latest`. This is what makes app code
    changes (e.g. the `/metrics` endpoint) actually reach the cluster. The tag
    must stay in sync with `crementation/values.yaml`'s `image.tag`. Requires
    two repo secrets — `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (Settings →
@@ -487,7 +487,7 @@ on `main` only):
    (job 1, `push:false`) so every change is validated; only `main` publishes.
 
 **First-deploy note (image + ArgoCD):** because `values.yaml` pins
-`v1.1.1`, the app pods can only start once the `push-app-image` job has
+`v1.1.2`, the app pods can only start once the `push-app-image` job has
 published that tag. On the very first `main` deploy, if ArgoCD (or a manual
 apply) runs before the image is pushed, the crementation pods `ImagePullBackOff`
 until the tag exists — then ArgoCD's `selfHeal`/retry (or `kubectl rollout`)
