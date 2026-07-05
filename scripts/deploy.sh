@@ -145,6 +145,45 @@ kubectl -n crementation rollout status deploy/crementation --timeout=240s || tru
 kubectl -n crementation get pods -l app.kubernetes.io/name=crementation
 ok "app deployed"
 
+# --- 8.5 Public hostnames (nip.io) + trusted TLS (Let's Encrypt) -------------
+# The committed ingresses use *.local hostnames + the internal-ca issuer, which
+# needs an /etc/hosts entry and shows a browser cert warning. Since the ingress
+# node has a real public IP, switch every service to a *.<IP>.nip.io hostname
+# (nip.io is public wildcard DNS -> resolves to that IP with ZERO client setup)
+# and re-issue its cert from letsencrypt-prod (real, browser-trusted). This
+# only works because nip.io is a real TLD and port 80 is open for the HTTP-01
+# challenge. Set NIPIO=0 to skip and keep .local + internal-ca.
+if [ "${NIPIO:-1}" = "1" ]; then
+  say "Public hostnames (nip.io) + Let's Encrypt certs"
+  # The ingress node's PUBLIC IP. kubeadm nodes don't set node ExternalIP, so
+  # prefer the INGRESS_PUBLIC_IP env var (cluster-up.sh prints it as the ingress
+  # EIP); fall back to any node ExternalIP if present.
+  IP="${INGRESS_PUBLIC_IP:-$(kubectl get node -l node-role.kubernetes.io/ingress -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null)}"
+  if [ -z "$IP" ]; then
+    echo "  ! could not auto-detect the ingress public IP; skipping nip.io."
+    echo "    Re-run with INGRESS_PUBLIC_IP=<ingress-EIP> to enable it."
+  else
+    # host:ingress:namespace  (svc = the nip.io subdomain label)
+    for e in "crementation:crementation:crementation" "grafana:prometheus-grafana:monitoring" \
+             "dashboard:kubernetes-dashboard:dashboard" "argocd:argocd-server:argocd" "dex:dex:auth"; do
+      sub="${e%%:*}"; rest="${e#*:}"; name="${rest%%:*}"; ns="${rest##*:}"
+      host="$sub.$IP.nip.io"
+      kubectl -n "$ns" annotate ingress "$name" cert-manager.io/cluster-issuer=letsencrypt-prod --overwrite >/dev/null 2>&1
+      kubectl -n "$ns" patch ingress "$name" --type=json \
+        -p="[{\"op\":\"replace\",\"path\":\"/spec/rules/0/host\",\"value\":\"$host\"}]" >/dev/null 2>&1
+      # some ingresses have a tls block whose host list must match (else LE 400s)
+      if [ -n "$(kubectl -n "$ns" get ingress "$name" -o jsonpath='{.spec.tls}' 2>/dev/null)" ]; then
+        kubectl -n "$ns" patch ingress "$name" --type=json \
+          -p="[{\"op\":\"replace\",\"path\":\"/spec/tls/0/hosts/0\",\"value\":\"$host\"}]" >/dev/null 2>&1
+        sec=$(kubectl -n "$ns" get ingress "$name" -o jsonpath='{.spec.tls[0].secretName}' 2>/dev/null)
+        kubectl -n "$ns" delete certificate "$sec" secret "$sec" >/dev/null 2>&1  # force LE re-issue
+      fi
+      echo "  $host -> letsencrypt-prod"
+    done
+    ok "nip.io hostnames + Let's Encrypt (certs issue over the next ~1 min)"
+  fi
+fi
+
 # --- 9. NetworkPolicies LAST (deny-by-default; after all pods exist) ---------
 say "NetworkPolicies (deny-by-default, applied last)"
 mv infrastructure/kustomization.yaml.bak infrastructure/kustomization.yaml 2>/dev/null || true
@@ -161,14 +200,16 @@ kubectl -n ingress-nginx rollout restart daemonset/ingress-nginx-controller >/de
 kubectl -n ingress-nginx rollout status daemonset/ingress-nginx-controller --timeout=90s >/dev/null 2>&1 || true
 sleep 15
 INGRESS_NODE_IP=$(kubectl get node -l node-role.kubernetes.io/ingress -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)
+# domain suffix depends on whether nip.io was applied above
+if [ "${NIPIO:-1}" = "1" ] && [ -n "${IP:-}" ]; then SUF="$IP.nip.io"; else SUF="local"; fi
 # dex has no homepage at / (returns 404 by design) — probe its OIDC health
 # endpoint instead. The others serve / (200) or redirect to SSO login (302/303).
 for entry in "crementation:/" "grafana:/" "dashboard:/" "argocd:/" "dex:/healthz"; do
   h="${entry%%:*}"; path="${entry#*:}"
-  code=$(curl -sk -o /dev/null -w '%{http_code}' -H "Host: $h.local" "https://${INGRESS_NODE_IP}${path}" --connect-timeout 10 --max-time 15 2>/dev/null)
+  code=$(curl -sk -o /dev/null -w '%{http_code}' -H "Host: $h.$SUF" "https://${INGRESS_NODE_IP}${path}" --connect-timeout 10 --max-time 15 2>/dev/null)
   case "$code" in
-    200|302|303) echo "  ✓ $h.local -> HTTP $code" ;;
-    *)           echo "  ✗ $h.local -> HTTP ${code:-timeout} (may still be settling; re-check)" ;;
+    200|302|303) echo "  ✓ $h.$SUF -> HTTP $code" ;;
+    *)           echo "  ✗ $h.$SUF -> HTTP ${code:-timeout} (may still be settling; re-check)" ;;
   esac
 done
 
@@ -179,6 +220,11 @@ run=$(kubectl get pods -A --no-headers 2>/dev/null | grep -vE 'test' | awk '$4==
 echo "  Healthy pods (excl test hooks): $run / $tot"
 kubectl get externalsecrets -A 2>/dev/null | awk 'NR==1||/crementation|auth|velero/'
 echo ""
-echo "  Browser access: add to your laptop's hosts file (one line):"
-echo "    <ingress-EIP> crementation.local grafana.local dashboard.local dex.local argocd.local"
-echo "  then open https://crementation.local (accept the self-signed cert warning)."
+if [ "${NIPIO:-1}" = "1" ] && [ -n "${IP:-}" ]; then
+  echo "  Browser access (real DNS via nip.io, trusted Let's Encrypt certs — NO setup):"
+  echo "    https://crementation.$IP.nip.io   (the app)"
+  echo "    https://grafana.$IP.nip.io  https://dashboard.$IP.nip.io  https://argocd.$IP.nip.io"
+  echo "  Certs finish issuing ~1 min after this; refresh if you see a warning at first."
+else
+  echo "  Browser access: add to your laptop's hosts file:  <ingress-EIP> crementation.local ..."
+fi

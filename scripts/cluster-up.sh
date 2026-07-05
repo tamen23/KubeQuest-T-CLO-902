@@ -120,12 +120,17 @@ ok "nodes labelled"
 cat <<EOF
 
 ============================================================================
- CLUSTER READY. Now deploy the stack (SCRIPT B):
+ CLUSTER READY. Now deploy the stack (SCRIPT B), on kube-1:
 
+   # 1. copy the repo up:
+   scp -i $KEY -r infrastructure applications crementation components backups scripts ec2-user@$CP_IP:~/kubequest/
+   # 2. SSH in and run deploy.sh — pass the ingress IP so it wires up nip.io + Let's Encrypt:
    ssh -i $KEY ec2-user@$CP_IP
-   # then on kube-1, run scripts/deploy.sh (copy the repo up first — see it)
+   export GH_ID=... GH_SECRET=... DH_USER=maxi2 DH_TOKEN=... AWS_KEY=... AWS_SECRET=...
+   export INGRESS_PUBLIC_IP=$INGRESS_IP
+   bash ~/kubequest/scripts/deploy.sh
 
  Ingress (app entrypoint) IP: $INGRESS_IP
- Control-plane SSH:           ssh -i $KEY ec2-user@$CP_IP
+ -> services will be at https://<name>.$INGRESS_IP.nip.io (trusted certs, no hosts file)
 ============================================================================
 EOF
