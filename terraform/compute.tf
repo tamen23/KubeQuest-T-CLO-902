@@ -55,29 +55,40 @@ resource "aws_instance" "node" {
   }
 }
 
-# --- Elastic IP on the ingress node ------------------------------------------
-# The brief's `ingress` node exposes services externally, so the static public
-# IP (survives stop/start, keeps DNS/etc/hosts valid) attaches there.
+# --- Persistent Elastic IPs (looked up, NOT owned, by this state) -----------
+# Both EIPs are allocated in terraform/eips/ — a SEPARATE Terraform state,
+# deliberately isolated so a `terraform destroy` here (the normal "fresh
+# cluster before the defense" cycle) can NEVER release them. See
+# terraform/eips/main.tf's header for the full why (GitHub OAuth callback
+# URL, KUBECONFIG_B64 — both break if these IPs ever change).
+#
+# One-time prerequisite: `cd terraform/eips && terraform apply` must have
+# been run at least once (see that directory's README/header comment)
+# before `terraform apply` here — these data sources fail with "no matching
+# EIP found" otherwise.
 
-resource "aws_eip" "ingress" {
-  domain = "vpc"
-  instance = one([
-    for name, cfg in var.nodes : aws_instance.node[name].id if cfg.is_ingress
-  ])
+data "aws_eip" "ingress" {
   tags = { Name = "${var.project}-ingress-eip" }
 }
 
-# --- Elastic IP on the control-plane node ------------------------------------
-# A STATIC public IP for kube-1 so the kubeconfig (and the API cert SANs) never
-# change: bake this IP into the apiserver cert once with --apiserver-cert-extra-
-# sans, generate KUBECONFIG_B64 once, and it keeps working across stop/start and
-# even destroy/recreate (the address is reserved to the account). Without this,
-# the control-plane's public IP is ephemeral and you'd regenerate the kubeconfig
-# every session.
-resource "aws_eip" "control_plane" {
-  domain = "vpc"
-  instance = one([
+data "aws_eip" "control_plane" {
+  tags = { Name = "${var.project}-control-plane-eip" }
+}
+
+# Associates the permanent ingress EIP onto whichever instance is currently
+# tagged as the ingress node. This association is torn down and recreated
+# every rebuild — that's expected and fine; only the ADDRESS itself
+# (data.aws_eip.ingress, above) is permanent.
+resource "aws_eip_association" "ingress" {
+  allocation_id = data.aws_eip.ingress.id
+  instance_id = one([
+    for name, cfg in var.nodes : aws_instance.node[name].id if cfg.is_ingress
+  ])
+}
+
+resource "aws_eip_association" "control_plane" {
+  allocation_id = data.aws_eip.control_plane.id
+  instance_id = one([
     for name, cfg in var.nodes : aws_instance.node[name].id if cfg.is_control_plane
   ])
-  tags = { Name = "${var.project}-control-plane-eip" }
 }

@@ -1,6 +1,6 @@
 output "ingress_public_ip" {
-  description = "Static Elastic IP of the ingress node (external entrypoint). Point *.local /etc/hosts here."
-  value       = aws_eip.ingress.public_ip
+  description = "Persistent Elastic IP of the ingress node (see terraform/eips/) — every service is reachable at <name>.<this-ip>.nip.io, no /etc/hosts needed."
+  value       = data.aws_eip.ingress.public_ip
 }
 
 # Everything you need per node, keyed by role (kube-1/kube-2/ingress/monitoring):
@@ -18,12 +18,13 @@ output "nodes" {
 }
 
 # Convenience: the control-plane node's public IP (where you SSH to run
-# `kubeadm init`) and its private IP (what the workers join against).
-# This is the STATIC Elastic IP (aws_eip.control_plane), so it's stable across
-# stop/start — bake it into the API cert SANs and KUBECONFIG_B64 once.
+# `kubeadm init`) and its private IP (what the workers join against). This is
+# the PERSISTENT Elastic IP (terraform/eips/, looked up via data.aws_eip
+# above) — stable across stop/start AND across a full destroy+rebuild of
+# this state — bake it into the API cert SANs and KUBECONFIG_B64 once, ever.
 output "control_plane_public_ip" {
-  description = "Static Elastic IP of the control-plane node (kubeadm init + kubeconfig server)."
-  value       = aws_eip.control_plane.public_ip
+  description = "Persistent Elastic IP of the control-plane node (kubeadm init + kubeconfig server)."
+  value       = data.aws_eip.control_plane.public_ip
 }
 
 output "control_plane_private_ip" {

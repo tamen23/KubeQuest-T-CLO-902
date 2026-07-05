@@ -26,8 +26,25 @@ POD_CIDR=192.168.0.0/16
 say() { printf '\n\033[1;36m== %s ==\033[0m\n' "$1"; }
 ok()  { printf '\033[1;32m  ✓ %s\033[0m\n' "$1"; }
 
+# --- 0. one-time: persistent Elastic IPs (separate state, never destroyed) --
+# terraform/eips/ allocates the ingress + control-plane EIPs in their OWN
+# Terraform state, deliberately isolated from the cluster below — every
+# nip.io hostname, the GitHub OAuth callback URL, and KUBECONFIG_B64 are all
+# built on these IPs, and none of them should ever need updating just
+# because the cluster itself got destroyed and rebuilt. This is idempotent:
+# if the EIPs already exist (checked via `terraform show`), this is a no-op.
+say "Persistent Elastic IPs (one-time, idempotent)"
+( cd "$TF/eips" && terraform init -input=false >/dev/null && \
+  if [ -z "$(terraform show 2>/dev/null)" ]; then
+    terraform apply -auto-approve
+  else
+    echo "  already allocated, skipping"
+  fi
+)
+ok "Persistent EIPs ready"
+
 # --- 1. provision the 4 nodes ------------------------------------------------
-say "Terraform apply (4 nodes + VPC + 2 EIPs)"
+say "Terraform apply (4 nodes + VPC, EIPs re-associated from terraform/eips/)"
 # Clear any stale key file first: Terraform can't overwrite a read-only .pem
 # left by a previous run ("Access is denied" on Windows). Remove attrs + file.
 if [ -f "$KEY" ]; then
@@ -35,7 +52,7 @@ if [ -f "$KEY" ]; then
   command -v attrib.exe >/dev/null && attrib.exe -R "$(cygpath -w "$KEY" 2>/dev/null || echo "$KEY")" 2>/dev/null || true
   rm -f "$KEY" 2>/dev/null || true
 fi
-( cd "$TF" && terraform init -input=false >/dev/null && terraform apply -auto-approve -var="ssh_ingress_cidr=0.0.0.0/0" )
+( cd "$TF" && terraform init -input=false -upgrade >/dev/null && terraform apply -auto-approve -var="ssh_ingress_cidr=0.0.0.0/0" )
 # Lock the freshly-written key so SSH accepts it (Windows: icacls; Unix: chmod).
 if command -v icacls.exe >/dev/null 2>&1; then
   KEY_WIN="$(cygpath -w "$KEY" 2>/dev/null || echo "$KEY")"

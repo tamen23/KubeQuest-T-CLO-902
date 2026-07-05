@@ -10,10 +10,10 @@ matching the brief's 4-node layout (project.pdf p.4):
 | `ingress` | exposes services externally (**gets the Elastic IP**) | c7i-flex.large (4GB) |
 | `monitoring` | Prometheus / Grafana / Loki (heavy) | m7i-flex.large (8GB) |
 
-Plus a VPC, a security group (22/80/443 + all intra-cluster), and a static
-Elastic IP on the ingress node. All instance types are free-tier-eligible.
-Node roles/sizes are defined in the `nodes` variable in `variables.tf` — edit
-there to change the layout.
+Plus a VPC, a security group (22/80/443 + all intra-cluster), and two
+persistent Elastic IPs (ingress + control-plane — see `eips/` below). All
+instance types are free-tier-eligible. Node roles/sizes are defined in the
+`nodes` variable in `variables.tf` — edit there to change the layout.
 
 > **This is the AWS layer only.** The Kubernetes GitOps (ingress, monitoring,
 > Vault, the app, …) lives in `infrastructure/` and `applications/` on the
@@ -25,6 +25,28 @@ there to change the layout.
 - Terraform >= 1.5 — `winget install -e --id Hashicorp.Terraform`
 - AWS CLI configured (`aws configure`), a user with EC2/VPC permissions.
 - Your public IP for the SSH rule: `curl ifconfig.me`
+
+## One-time setup: persistent Elastic IPs (`eips/`)
+
+Before the very first `terraform apply` below (skip if `eips/` has already
+been applied once — check with `cd eips && terraform show`):
+
+```sh
+cd terraform/eips
+terraform init
+terraform apply
+cd ..
+```
+
+This allocates the ingress and control-plane Elastic IPs in their **own,
+separate Terraform state** — deliberately isolated from the cluster's own
+state below, so a normal `terraform destroy` (the "fresh cluster before the
+defense" cycle) can never release them. Every nip.io hostname
+(`crementation.<ip>.nip.io`, etc), the GitHub OAuth app's callback URL, and
+`KUBECONFIG_B64` are all built on these IPs — if they changed on every
+rebuild, all three would need manual fixing every time. Run this once, ever;
+`terraform apply` below re-associates the *same* addresses onto whichever
+instances come up on every subsequent rebuild.
 
 ## Apply
 
@@ -150,17 +172,20 @@ base64 -w0 ./kubeconfig-kubequest   > kubeconfig.b64
 rm kubeconfig.b64   # don't leave it lying around
 ```
 
-**You only do this ONCE.** The control-plane node has a **static Elastic IP**
-(`aws_eip.control_plane`), so its public IP never changes — not on stop/start,
-not even on destroy/recreate (the address is reserved to your account). So the
-kubeconfig's `server:` line stays valid forever and `KUBECONFIG_B64` never
-needs regenerating. Then trigger the deploy: **Actions tab → Deploy → Run
-workflow**. It seeds Vault from your GitHub secrets and lets ArgoCD deploy
-everything — no secrets typed.
+**You only do this ONCE.** The control-plane node has a **persistent Elastic
+IP**, allocated in `terraform/eips/` — a separate Terraform state, isolated
+on purpose so a normal `terraform destroy` in this directory (the "fresh
+cluster before the defense" cycle) can never release it. So the kubeconfig's
+`server:` line stays valid forever and `KUBECONFIG_B64` never needs
+regenerating, even across a full destroy+rebuild of the cluster itself. Then
+trigger the deploy: **Actions tab → Deploy → Run workflow**. It seeds Vault
+from your GitHub secrets and lets ArgoCD deploy everything — no secrets
+typed.
 
-> The one time you'd redo `KUBECONFIG_B64` is if you `terraform destroy` the
-> EIP itself (a full teardown that releases the address). If you keep the EIP
-> and only stop/start instances, the kubeconfig is permanent.
+> The only way to actually lose this IP is running `terraform destroy`
+> **inside `terraform/eips/` itself** — a separate, deliberate, rare action
+> you'd take only when tearing down the whole project for good, never as
+> part of a normal rebuild. See `terraform/eips/main.tf`'s header comment.
 
 Alternatively, deploy from your laptop with `personal/bootstrap.sh` (which
 already has local cluster access) instead of the workflow.
