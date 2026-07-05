@@ -5,6 +5,12 @@ platform (ingress, dashboard, monitoring, logging, secrets, auth, policy)
 plus a Laravel + MySQL application converted from docker-compose to
 Helm/Kustomize.
 
+## Documentation
+
+The detailed documentation is split by topic under [`docs/`](docs/index.md):
+architecture, repository layout, deployment runbooks, security, observability,
+resilience, backups, defense demos, and CI/CD.
+
 ## Repository layout
 
 - `crementation/` — Helm chart for the app (source of truth for its manifests)
