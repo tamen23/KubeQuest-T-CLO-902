@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Build crementation app image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: sample-app-master
           file: sample-app-master/Dockerfile
@@ -60,7 +60,7 @@ jobs:
         # below regardless. Also skip if no SARIF was produced.
         if: hashFiles('trivy-image-results.sarif') != ''
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-image-results.sarif
 
@@ -89,7 +89,7 @@ jobs:
           sudo mv kustomize /usr/local/bin/
 
       - name: Install helm
-        uses: azure/setup-helm@v4.3.0
+        uses: azure/setup-helm@v5
 
       - name: Render infrastructure/ (helmCharts inflator)
         run: kustomize build --enable-helm --load-restrictor LoadRestrictionsNone infrastructure > rendered-infrastructure.yaml
@@ -181,13 +181,13 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build + push (${{ env.APP_IMAGE_TAG }} + latest)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: sample-app-master
           file: sample-app-master/Dockerfile
