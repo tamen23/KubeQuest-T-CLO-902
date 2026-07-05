@@ -27,20 +27,67 @@ roleRef:
   name: kube-rbac-proxy-monitoring-reader
   apiGroup: rbac.authorization.k8s.io
 ---
+# kube-rbac-proxy validates a caller's bearer token by asking the API server
+# itself (a TokenReview, then a SubjectAccessReview) -- but making THAT call
+# is its own permission, granted by the standard `system:auth-delegator`
+# ClusterRole, bound to whatever ServiceAccount the *proxy's own pod* runs
+# as (Prometheus's/Alertmanager's/Loki's SA, not Grafana's -- Grafana is the
+# caller being checked, not the checker). Confirmed live this was missing
+# for all three: every kube-rbac-proxy request 401'd with "tokenreviews...is
+# forbidden" until this binding existed, meaning bonus #3 (kube-rbac-proxy
+# auth on Prometheus/Alertmanager/Loki) had never actually been verified
+# end-to-end before this was added.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-kube-rbac-proxy-auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-kube-prometheus-prometheus
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: system:auth-delegator
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alertmanager-kube-rbac-proxy-auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-kube-prometheus-alertmanager
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: system:auth-delegator
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: loki-kube-rbac-proxy-auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: loki
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: system:auth-delegator
+  apiGroup: rbac.authorization.k8s.io
+---
 # Dedicated Services exposing the kube-rbac-proxy sidecar ports, since the
 # kube-prometheus-stack chart's built-in Services only expose Prometheus'/
 # Alertmanager's own ports (9090/9093), which are now `listenLocal: true`
-# and unreachable from outside the pod.
+# and unreachable from outside the pod. Loki's chart has no `listenLocal`
+# equivalent, so its raw port (3100) is instead locked down by
+# infrastructure/network-policies/monitoring.yaml — this Service just adds
+# the reachable path via the sidecar.
 #
-# VERIFY BEFORE RELYING ON THIS: app.kubernetes.io/name: prometheus /
-# alertmanager is the documented kube-prometheus-stack / Prometheus Operator
-# convention, but it was not confirmed against a live cluster (no kubectl/helm
-# access while writing this). Before the defense demo, run:
-#   kubectl -n monitoring get pods --show-labels | grep -E 'prometheus|alertmanager'
-# and diff against the selectors below. If they don't match, the quickest fix
-# is `kubectl get svc prometheus-operated -n monitoring -o yaml` and copy its
-# `spec.selector` here verbatim (Alertmanager's built-in Service is
-# `alertmanager-operated`).
+# Selectors below confirmed against a live cluster (`kubectl -n monitoring
+# get pods --show-labels`): app.kubernetes.io/name is prometheus /
+# alertmanager / loki respectively, matching the kube-prometheus-stack /
+# Prometheus Operator / grafana/loki chart conventions.
 apiVersion: v1
 kind: Service
 metadata:
@@ -65,4 +112,18 @@ spec:
   ports:
     - name: rbac-https
       port: 9094
+      targetPort: rbac-https
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki-kube-rbac-proxy
+  namespace: monitoring
+spec:
+  selector:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/component: single-binary
+  ports:
+    - name: rbac-https
+      port: 3101
       targetPort: rbac-https

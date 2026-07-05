@@ -1,9 +1,23 @@
 # Deny-by-default for monitoring, then allow:
 #   ingress-nginx -> grafana (auth already gated at the ingress by oauth2-proxy)
-#   alloy -> loki (log shipping)
+#   alloy -> loki:3100 (log shipping — the only thing allowed to reach Loki's
+#     raw, unauthenticated port; see loki-ingress below)
+#   anyone in-namespace -> loki:3101 (kube-rbac-proxy — auth is enforced by
+#     the SubjectAccessReview inside the proxy itself, not the network layer,
+#     so this port doesn't need restricting the same way)
 #   prometheus -> anything cluster-wide with a ServiceMonitor (broad scrape egress)
 #   dashboard/oauth2-proxy do NOT get a bypass — this namespace only trusts
 #   ingress-nginx and its own pods.
+#
+# NOTE (honest limitation, see personal/BONUSES.md): Flannel — the cluster's
+# CNI — has no NetworkPolicy enforcement engine of its own. Every policy in
+# this directory is CORRECT, intentional config, but is not currently
+# actively enforced on the live cluster (confirmed: cross-namespace traffic
+# that should be blocked currently goes through). Adding an enforcement layer
+# without risking the hard-won Flannel networking fix (source_dest_check,
+# VXLAN) needs a bigger, deliberate change (e.g. swapping to a CNI that does
+# both networking + policy) — not done here. These policies become live the
+# moment that gap is closed; nothing here needs to change when it is.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -41,7 +55,18 @@ metadata:
   name: allow-intra-namespace
   namespace: monitoring
 spec:
-  podSelector: {}
+  # Excludes Loki (see its podSelector below) — Loki's raw port 3100 has its
+  # own, narrower ingress rule (deny-loki-raw-port-except-alloy) so this
+  # blanket rule doesn't reopen it to every pod in the namespace. Everything
+  # else here (Grafana <-> prometheus/alertmanager rbac-proxy ports, etc.)
+  # keeps relying on kube-rbac-proxy's own auth as the real gate, same as
+  # before — this policy only tightens the one port that had no proxy in
+  # front of it until now.
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values: ["loki"]
   policyTypes:
     - Ingress
     - Egress
@@ -55,6 +80,41 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
+---
+# Loki's own ingress rule: the raw, unauthenticated port (3100) is reachable
+# ONLY from Alloy (log-shipping writes). Everyone else — including Grafana,
+# in the same namespace — must go through the rbac-proxy sidecar on 3101
+# instead, which is open to the whole namespace (matching the
+# already-established pattern for Prometheus/Alertmanager) because
+# kube-rbac-proxy's SubjectAccessReview is the actual auth gate, not the
+# network layer.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: loki-ingress
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+      app.kubernetes.io/component: single-binary
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+      ports:
+        - protocol: TCP
+          port: 3100
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3101
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

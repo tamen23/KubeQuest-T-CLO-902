@@ -92,6 +92,20 @@ ssh $SSH_OPTS ec2-user@"$CP_IP" "
 "
 ok "control plane up + Flannel CNI + untainted"
 
+# NOTE: Flannel has NO NetworkPolicy enforcement engine of its own -- every
+# policy in infrastructure/network-policies/ is currently a paper exercise
+# (verified live: cross-namespace traffic that a deny-by-default policy
+# should block goes through anyway). Adding a policy engine on top of Flannel
+# without replacing it turns out not to be viable: Calico's Felix (tried as
+# "Calico for policy only") still requires ITS OWN CNI plugin to have run on
+# every pod to populate the interface-mapping metadata it needs -- it cannot
+# enforce policy for pods whose networking was set up by a different CNI.
+# The only real fix is swapping Flannel for a CNI that does both networking
+# AND policy (e.g. full Calico, or Cilium) -- a bigger change than adding an
+# add-on, deliberately not done here to avoid re-risking the cross-node
+# networking fix (source_dest_check, VXLAN) this took hours to get right.
+# See personal/BONUSES.md for the honest writeup.
+
 # --- 3. join the 3 workers ---------------------------------------------------
 say "Joining workers"
 JOIN=$(ssh $SSH_OPTS ec2-user@"$CP_IP" "sudo kubeadm token create --print-join-command")

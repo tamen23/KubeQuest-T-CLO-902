@@ -49,6 +49,33 @@ singleBinary:
     storageClass: local-path
     size: 10Gi
 
+  # kube-rbac-proxy sidecar, same pattern as Prometheus/Alertmanager
+  # (infrastructure/monitoring/prometheus/values-prometheus.yaml) — per the
+  # brief's bonus ("multi-tenant and authentification to prometheus and loki,
+  # via kube-rbac-proxy"). Loki's chart has no `listenLocal` equivalent (its
+  # own Service always exposes 3100 directly), so the raw port is instead
+  # locked down by infrastructure/network-policies/monitoring.yaml (only the
+  # rbac-proxy port is reachable, even from other monitoring pods) — the
+  # sidecar pattern alone would do nothing if 3100 stayed open to anyone in
+  # the namespace.
+  extraContainers:
+    - name: kube-rbac-proxy
+      image: quay.io/brancz/kube-rbac-proxy:v0.18.0
+      args:
+        - --secure-listen-address=0.0.0.0:3101
+        - --upstream=http://127.0.0.1:3100/
+        - --logtostderr=true
+      ports:
+        - containerPort: 3101
+          name: rbac-https
+      resources:
+        requests:
+          cpu: 20m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+
 backend:
   replicas: 0
 
