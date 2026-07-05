@@ -53,9 +53,13 @@ jobs:
             --exit-code 0 crementation-app:ci
 
       - name: Upload Trivy results to GitHub Security tab
-        # only if the SARIF was actually produced — otherwise the upload errors
-        # ("Path does not exist") and masks the real failure upstream.
+        # Best-effort: this needs GitHub code-scanning (Advanced Security) to be
+        # enabled on the repo. On org repos where it isn't, the upload errors
+        # with "Resource not accessible by integration" — that must NOT fail CI,
+        # so continue-on-error. The findings still print in the summary step
+        # below regardless. Also skip if no SARIF was produced.
         if: hashFiles('trivy-image-results.sarif') != ''
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-image-results.sarif
