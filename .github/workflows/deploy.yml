@@ -108,7 +108,7 @@ jobs:
           vr "vault write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=$ESO_SA \
                 bound_service_account_namespaces=$ESO_NS \
-                policy=external-secrets-read ttl=1h"
+                token_policies=external-secrets-read ttl=1h"
 
       - name: Vault — seed all secrets (from GitHub secrets + generated)
         env:

@@ -25,6 +25,18 @@ helmCharts:
     releaseName: mysql
     namespace: crementation
     valuesInline:
+      # Bitnami removed the old versioned tags from docker.io/bitnami in their
+      # Aug-2025 registry migration (only :latest remains there; the pinned
+      # 8.4.4-...-r4 tag 404s). The versioned images still live under the
+      # `bitnamilegacy` repo, so point the chart there to keep a reproducible
+      # pinned tag instead of chasing :latest.
+      image:
+        registry: docker.io
+        repository: bitnamilegacy/mysql
+      global:
+        security:
+          allowInsecureImages: true # required: chart blocks non-bitnami repos otherwise
+
       auth:
         existingSecret: mysql-secret
         database: app_database

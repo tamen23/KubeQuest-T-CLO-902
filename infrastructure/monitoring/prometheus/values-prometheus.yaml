@@ -10,6 +10,15 @@ grafana:
     name: grafana
     autoMount: true
 
+  # kube-prometheus-stack auto-provisions its OWN default Prometheus datasource.
+  # We define a custom Prometheus datasource below (routed through kube-rbac-proxy)
+  # and mark IT default — so disable the chart's built-in one, otherwise Grafana
+  # sees two default datasources and crashes with "Only one datasource per
+  # organization can be marked as default".
+  sidecar:
+    datasources:
+      defaultDatasourceEnabled: false
+
   datasources:
     datasources.yaml:
       apiVersion: 1

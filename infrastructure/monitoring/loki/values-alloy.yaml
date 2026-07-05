@@ -31,9 +31,10 @@ alloy:
         forward_to = [loki.write.default.receiver]
       }
 
-      # SingleBinary deployment mode + gateway.enabled: false (see values-loki.yaml)
-      # means the "loki" service itself accepts writes on 3100, matching the
-      # Grafana Loki datasource URL configured in values-prometheus.yaml.
+      // SingleBinary deployment mode + gateway.enabled: false (see values-loki.yaml)
+      // means the "loki" service itself accepts writes on 3100, matching the
+      // Grafana Loki datasource URL configured in values-prometheus.yaml.
+      // (Alloy config uses // comments, not # — # is an illegal character here.)
       loki.write "default" {
         endpoint {
           url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
