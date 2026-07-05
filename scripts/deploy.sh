@@ -115,11 +115,20 @@ say "Namespace fix: dex -> auth, alloy -> monitoring, dashboard -> dashboard"
 helm repo add dex https://charts.dexidp.io >/dev/null 2>&1 || true
 helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
 helm repo update >/dev/null 2>&1
+# FIRST delete anything the infrastructure kustomize apply dumped in `default`
+# (these 3 charts don't stamp metadata.namespace, so they land there). Delete
+# INCLUDING the ingress objects — a stale default/dex ingress holds the
+# dex.local host and blocks the correctly-namespaced one. Delete before the
+# re-apply so the host is free.
+kubectl -n default delete ingress dex kubernetes-dashboard >/dev/null 2>&1 || true
+kubectl -n default delete deploy,ds,svc,sa -l 'app.kubernetes.io/name in (dex,alloy)' >/dev/null 2>&1 || true
+kubectl -n default delete deploy,svc,sa -l 'app.kubernetes.io/part-of=kubernetes-dashboard' >/dev/null 2>&1 || true
+sleep 3
+# THEN render each with `helm template -n <ns>` (which stamps the namespace) and
+# apply to the right namespace.
 helm template dex dex/dex --version 0.19.1 -n auth -f infrastructure/dex/values.yaml 2>/dev/null | kubectl apply -n auth --server-side --force-conflicts -f - >/dev/null 2>&1
 helm template alloy grafana/alloy --version 0.11.0 -n monitoring -f infrastructure/monitoring/loki/values-alloy.yaml 2>/dev/null | kubectl apply -n monitoring --server-side --force-conflicts -f - >/dev/null 2>&1
 helm template dashboard infrastructure/charts/kubernetes-dashboard -n dashboard -f infrastructure/dashboard/values.yaml 2>/dev/null | kubectl apply -n dashboard --server-side --force-conflicts -f - >/dev/null 2>&1
-# remove any copies that landed in default on a prior kustomize apply
-kubectl -n default delete deploy,ds,svc,sa -l 'app.kubernetes.io/name in (dex,alloy)' >/dev/null 2>&1 || true
 kubectl -n default delete deploy,svc,sa -l 'app.kubernetes.io/part-of=kubernetes-dashboard' >/dev/null 2>&1 || true
 ok "dex/alloy/dashboard in correct namespaces"
 
@@ -143,12 +152,33 @@ kubectl apply -k infrastructure/network-policies >/dev/null 2>&1 || \
   { $KB infrastructure > /tmp/infra2.yaml; kubectl apply -f /tmp/infra2.yaml >/dev/null 2>&1 || true; }
 ok "network policies applied"
 
-# --- 10. Summary -------------------------------------------------------------
+# --- 10. Verify the 5 services are reachable through the ingress -------------
+# Restart the ingress controller first: the dex/dashboard ingresses were
+# (re)created in step 6 after the controller cached its routes, so it needs a
+# reload to serve them (otherwise they 404 despite being correct).
+say "Verifying services through the ingress"
+kubectl -n ingress-nginx rollout restart daemonset/ingress-nginx-controller >/dev/null 2>&1
+kubectl -n ingress-nginx rollout status daemonset/ingress-nginx-controller --timeout=90s >/dev/null 2>&1 || true
+sleep 15
+INGRESS_NODE_IP=$(kubectl get node -l node-role.kubernetes.io/ingress -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)
+# dex has no homepage at / (returns 404 by design) — probe its OIDC health
+# endpoint instead. The others serve / (200) or redirect to SSO login (302/303).
+for entry in "crementation:/" "grafana:/" "dashboard:/" "argocd:/" "dex:/healthz"; do
+  h="${entry%%:*}"; path="${entry#*:}"
+  code=$(curl -sk -o /dev/null -w '%{http_code}' -H "Host: $h.local" "https://${INGRESS_NODE_IP}${path}" --connect-timeout 10 --max-time 15 2>/dev/null)
+  case "$code" in
+    200|302|303) echo "  ✓ $h.local -> HTTP $code" ;;
+    *)           echo "  ✗ $h.local -> HTTP ${code:-timeout} (may still be settling; re-check)" ;;
+  esac
+done
+
+# --- 11. Summary -------------------------------------------------------------
 say "Deploy complete — cluster status"
 tot=$(kubectl get pods -A --no-headers 2>/dev/null | grep -vE 'test' | wc -l)
 run=$(kubectl get pods -A --no-headers 2>/dev/null | grep -vE 'test' | awk '$4=="Running"||$4=="Completed"' | wc -l)
 echo "  Healthy pods (excl test hooks): $run / $tot"
 kubectl get externalsecrets -A 2>/dev/null | awk 'NR==1||/crementation|auth|velero/'
 echo ""
-echo "  App:      kubectl -n crementation get pods,svc,ingress,hpa"
-echo "  Reach it: curl -k -H 'Host: crementation.local' https://<ingress-EIP>/"
+echo "  Browser access: add to your laptop's hosts file (one line):"
+echo "    <ingress-EIP> crementation.local grafana.local dashboard.local dex.local argocd.local"
+echo "  then open https://crementation.local (accept the self-signed cert warning)."
