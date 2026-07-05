@@ -23,6 +23,7 @@ resources:
   - external-secrets/clustersecretstore.yaml
   - external-secrets/external-secrets.yaml
   - dex/external-secret.yaml
+  - velero/external-secret.yaml
   - monitoring/prometheus/rbac.yaml
   - monitoring/prometheus/alert-rules.yaml
   - monitoring/dashboards

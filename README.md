@@ -140,13 +140,14 @@ for ns in crementation ingress-nginx dashboard monitoring vault external-secrets
 done
 ```
 
-Docker Hub pull secret for `maxi2/crementation-app` (private repo — this is a
-real credential, create it imperatively, never commit it):
-
-```sh
-kubectl create secret docker-registry dockerhub-secret -n crementation \
-  --docker-username=<user> --docker-password=<token> --docker-server=https://index.docker.io/v1/
-```
+> **Secret model:** every secret lives in **Vault** — app/DB creds, Dex/OAuth,
+> the Docker Hub pull token, and the Velero AWS keys. External Secrets Operator
+> reads Vault and generates all the Kubernetes Secrets at runtime
+> (`dockerhub-secret`, `laravel-db`, `mysql-secret`, `dex-secrets`,
+> `velero-aws-creds`). ESO authenticates to Vault with **Kubernetes auth** (its
+> own ServiceAccount), so there is **no stored bootstrap token** anywhere —
+> nothing in git, nothing in GitHub, no local secrets file. The rule holds: if
+> it isn't in git, it's in Vault.
 
 ### 2. Vault (must come before anything that reads secrets)
 
@@ -161,50 +162,61 @@ helm repo add hashicorp https://helm.releases.hashicorp.com && helm repo update 
 helm install vault hashicorp/vault --version 0.28.1 -n vault -f infrastructure/vault/values.yaml
 
 kubectl -n vault exec -it vault-0 -- vault operator init -key-shares=1 -key-threshold=1 \
-  > vault-init.txt   # DO NOT COMMIT vault-init.txt — it holds the unseal key + root token
-
+  > vault-init.txt   # DO NOT COMMIT — holds the unseal key + root token
 kubectl -n vault exec -it vault-0 -- vault operator unseal <unseal-key-from-vault-init.txt>
+kubectl -n vault exec -it vault-0 -- vault login <root-token>
 ```
 
-Then, using the root token from `vault-init.txt` (one-time, to bootstrap a
-least-privilege token for External Secrets Operator — do not use the root
-token anywhere else):
+Enable the KV engine, the ESO read policy, and **Kubernetes auth** (this
+replaces the old static-token approach — ESO now proves its identity with its
+ServiceAccount, so nothing is stored):
 
 ```sh
-kubectl -n vault exec -it vault-0 -- vault login <root-token>
 kubectl -n vault exec -it vault-0 -- vault secrets enable -path=secret kv-v2
 kubectl -n vault exec -it vault-0 -- vault policy write external-secrets-read - <<'EOF'
-path "secret/data/*" {
-  capabilities = ["read"]
-}
+path "secret/data/*" { capabilities = ["read"] }
 EOF
-kubectl -n vault exec -it vault-0 -- vault token create -policy=external-secrets-read -format=json \
-  | jq -r '.auth.client_token' > vault-token.txt
 
-kubectl create secret generic vault-token -n external-secrets-system \
-  --from-file=token=vault-token.txt
-rm vault-init.txt vault-token.txt   # keep these out of the repo and out of shell history
+kubectl -n vault exec -it vault-0 -- vault auth enable kubernetes
+kubectl -n vault exec -it vault-0 -- vault write auth/kubernetes/config \
+  kubernetes_host=https://kubernetes.default.svc:443
+kubectl -n vault exec -it vault-0 -- vault write auth/kubernetes/role/external-secrets \
+  bound_service_account_names=external-secrets \
+  bound_service_account_namespaces=external-secrets-system \
+  policy=external-secrets-read ttl=1h
 ```
 
-Seed the app/Dex secrets (adjust values for your environment):
+Seed **all** secrets into Vault (the single source of truth — nothing is
+created by hand; ESO turns each of these into a K8s Secret):
 
 ```sh
 kubectl -n vault exec -it vault-0 -- vault kv put secret/secret \
   DB_HOST=mysql-primary.crementation.svc.cluster.local \
-  DB_DATABASE=app_database \
-  DB_USERNAME=app_user \
-  DB_PASSWORD=<generate-a-real-password> \
-  DB_ROOT_PASSWORD=<generate-a-real-password> \
-  DB_REPLICATION_PASSWORD=<generate-a-real-password> \
+  DB_DATABASE=app_database DB_USERNAME=app_user \
+  DB_PASSWORD=<real-password> DB_ROOT_PASSWORD=<real-password> \
+  DB_REPLICATION_PASSWORD=<real-password> \
   APP_KEY=<php artisan key:generate --show output>
 
 kubectl -n vault exec -it vault-0 -- vault kv put secret/dex \
   OAUTH2_PROXY_CLIENT_ID=oauth2-proxy \
-  OAUTH2_PROXY_CLIENT_SECRET=<generate-a-real-secret> \
+  OAUTH2_PROXY_CLIENT_SECRET=<real-secret> \
   OAUTH2_PROXY_COOKIE_SECRET=<openssl rand -base64 32 | head -c 32> \
-  GITHUB_CLIENT_ID=<from GitHub OAuth app settings> \
-  GITHUB_CLIENT_SECRET=<from GitHub OAuth app settings>
+  GITHUB_CLIENT_ID=<from GitHub OAuth app> GITHUB_CLIENT_SECRET=<from GitHub OAuth app>
+
+# Docker Hub pull token (ESO builds the dockerconfigjson pull secret from this):
+kubectl -n vault exec -it vault-0 -- vault kv put secret/dockerhub \
+  username=maxi2 token=<dckr_pat_...>
+
+# AWS keys for Velero -> S3 (ESO builds the velero-aws-creds secret from this):
+kubectl -n vault exec -it vault-0 -- vault kv put secret/aws \
+  AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret>
+
+rm vault-init.txt   # keep out of the repo and out of shell history
 ```
+
+> **All of the above is automated by `personal/bootstrap.sh`** (gitignored) —
+> it installs+unseals Vault, configures k8s auth, generates the random secrets,
+> and seeds Vault from env vars you export for the one run. See its header.
 
 > In the GitHub OAuth app settings, the **Authorization callback URL** must be
 > `https://dex.local/callback` (Dex's issuer + `/callback`, matching
