@@ -26,40 +26,55 @@ jobs:
           tags: crementation-app:ci
           load: true
 
-      # Install Trivy ONCE via its official installer, then run the CLI directly.
-      # (Running the trivy-action three times re-downloaded the binary each time
-      # and hit GitHub's unauthenticated rate limit — the CLI approach installs
-      # once and is immune to that.)
-      - name: Install Trivy
+      # Trivy runs from its OFFICIAL DOCKER IMAGE, not a downloaded binary.
+      # (The binary install / trivy-action both re-download the release from
+      # GitHub and hit unauthenticated rate limits — exit 1. Pulling the image
+      # via Docker avoids that entirely.) The container gets the runner's Docker
+      # socket + image cache so it can scan the `crementation-app:ci` image we
+      # just built, and a shared workdir so the SARIF file lands on the host.
+      # A named volume caches the vuln DB across the three runs.
+      - name: Pull Trivy image + prime vuln DB
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin v0.65.0
-          trivy --version
+          docker pull aquasec/trivy:0.65.0
+          docker volume create trivy-cache
 
       - name: Trivy — SARIF for the Security tab (report all CRITICAL/HIGH)
         run: |
-          trivy image --scanners vuln --format sarif --output trivy-image-results.sarif \
-            --severity CRITICAL,HIGH --exit-code 0 crementation-app:ci
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache/ \
+            -v "$PWD:/work" -w /work \
+            aquasec/trivy:0.65.0 image --scanners vuln --format sarif \
+            --output trivy-image-results.sarif --severity CRITICAL,HIGH \
+            --exit-code 0 crementation-app:ci
 
       - name: Upload Trivy results to GitHub Security tab
+        # only if the SARIF was actually produced — otherwise the upload errors
+        # ("Path does not exist") and masks the real failure upstream.
+        if: hashFiles('trivy-image-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
         with:
           sarif_file: trivy-image-results.sarif
 
-      - name: Trivy — human-readable summary (all CRITICAL/HIGH, non-blocking)
+      - name: Trivy — human-readable summary (CRITICAL/HIGH, non-blocking)
         if: always()
         run: |
-          trivy image --scanners vuln --format table --severity CRITICAL,HIGH \
-            --exit-code 0 crementation-app:ci
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache/ \
+            aquasec/trivy:0.65.0 image --scanners vuln --format table \
+            --severity CRITICAL,HIGH --exit-code 0 crementation-app:ci
 
       - name: Trivy — FAIL on FIXABLE CRITICAL CVEs (the gate)
         run: |
           # ignore-unfixed: the php:8.2-apache base always carries some upstream
           # CVEs with no fix — those shouldn't red every run. But a CRITICAL we
           # CAN patch is our responsibility, so fail on it.
-          trivy image --scanners vuln --format table --severity CRITICAL \
-            --ignore-unfixed --exit-code 1 crementation-app:ci
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache/ \
+            aquasec/trivy:0.65.0 image --scanners vuln --format table \
+            --severity CRITICAL --ignore-unfixed --exit-code 1 crementation-app:ci
 
   lint-manifests:
     name: Lint Kubernetes manifests + Helm charts
