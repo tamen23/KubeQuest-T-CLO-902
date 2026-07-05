@@ -51,7 +51,14 @@ terraform output -raw control_plane_public_ip
 ```sh
 ssh -i ./kubequest-key.pem ec2-user@<control_plane_public_ip>
 
-sudo kubeadm init --pod-network-cidr=192.168.0.0/16
+# Include the node's PUBLIC IP in the API server certificate's valid names, so
+# a remote client (your laptop, or the GitHub Actions deploy workflow) can talk
+# to the API over the public IP without a TLS error. IMDSv2 is enforced on
+# these instances, so fetch the IP with a token:
+TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+PUBIP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+
+sudo kubeadm init --pod-network-cidr=192.168.0.0/16 --apiserver-cert-extra-sans="$PUBIP"
 
 # kubectl for ec2-user
 mkdir -p ~/.kube && sudo cp /etc/kubernetes/admin.conf ~/.kube/config && sudo chown $(id -u):$(id -g) ~/.kube/config
@@ -59,6 +66,13 @@ mkdir -p ~/.kube && sudo cp /etc/kubernetes/admin.conf ~/.kube/config && sudo ch
 # Calico CNI (nodes stay NotReady until this is applied)
 kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
 ```
+
+> **Why `--apiserver-cert-extra-sans`:** kubeadm's API cert defaults to the
+> node's *private* IP + internal names only. Remote clients reach the API over
+> the *public* IP, so without adding it here you'd get
+> `x509: certificate is valid for 10.x.x.x, not <public-ip>`. Adding it at init
+> time is the clean fix. (If you forget, you can regenerate the apiserver cert
+> later, but it's easier to get right now.)
 
 `kubeadm init` prints a `kubeadm join <cp-private-ip>:6443 --token ... --discovery-token-ca-cert-hash ...`
 command — **copy it**, you need it for the workers.
@@ -88,13 +102,44 @@ that matter for scheduling.)
 ## Get the kubeconfig onto your laptop
 
 ```sh
-scp -i terraform/kubequest-key.pem ec2-user@<control_plane_public_ip>:~/.kube/config ./kubeconfig-kubequest
+scp -i ./kubequest-key.pem ec2-user@<control_plane_public_ip>:~/.kube/config ./kubeconfig-kubequest
 # edit the `server:` line to the control-plane node's PUBLIC ip, then:
 export KUBECONFIG=$PWD/kubeconfig-kubequest
 kubectl get nodes
 ```
 
-Now follow the repo README's Deployment section to deploy `kubequest-infra`.
+## Give the deploy workflow cluster access (KUBECONFIG_B64 secret)
+
+The GitHub Actions **Deploy** workflow (`.github/workflows/deploy.yml`) seeds
+Vault and hands off to ArgoCD — but it runs on GitHub's servers, so it needs a
+kubeconfig to reach your cluster. Provide it as the repo secret `KUBECONFIG_B64`
+(base64 of the kubeconfig above, with the **public** `server:` IP — which works
+because you added `--apiserver-cert-extra-sans` at init):
+
+```sh
+# 1. confirm the kubeconfig's server line is the control-plane PUBLIC ip (edit if not)
+grep server: ./kubeconfig-kubequest
+
+# 2. base64-encode it (one line, no wrapping):
+#    Git Bash / Linux / macOS:
+base64 -w0 ./kubeconfig-kubequest   > kubeconfig.b64
+#    (macOS without -w0:  base64 -i ./kubeconfig-kubequest -o kubeconfig.b64)
+#    Windows PowerShell:
+#    [Convert]::ToBase64String([IO.File]::ReadAllBytes("./kubeconfig-kubequest")) | Set-Content kubeconfig.b64
+
+# 3. copy the contents of kubeconfig.b64 into GitHub:
+#    Settings -> Secrets and variables -> Actions -> New repository secret
+#    Name: KUBECONFIG_B64   Value: <paste>
+rm kubeconfig.b64   # don't leave it lying around
+```
+
+Set once per cluster (the public IP changes if you recreate the instance — a
+fresh cluster means a fresh KUBECONFIG_B64). Then trigger the deploy: **Actions
+tab → Deploy → Run workflow**. It seeds Vault from your GitHub secrets and lets
+ArgoCD deploy everything — no secrets typed.
+
+Alternatively, deploy from your laptop with `personal/bootstrap.sh` (which
+already has local cluster access) instead of the workflow.
 
 ## COST — the brief's own model: shut down when idle
 
