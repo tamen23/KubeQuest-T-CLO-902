@@ -21,6 +21,51 @@ image:
 imagePullSecrets:
   - name: dockerhub-secret
 
+# Startup fix-ups for the php:8.2-apache image (infra-side, NOT app code):
+# the image's Apache serves the app root and ignores Laravel's .htaccess, so a
+# bare request shows "Index of /" instead of the app. This wraps the normal
+# apache2-foreground start with the config fixes that make Laravel serve:
+#   - <Directory> AllowOverride All  -> Laravel's public/.htaccess (pretty URLs) works
+#   - a2enmod rewrite                -> mod_rewrite for that .htaccess
+#   - DirectoryIndex index.php       -> serve Laravel's front controller, not a dir listing
+#   - php artisan migrate --force    -> create the app's DB tables on first boot
+#   - chmod storage/bootstrap cache  -> Laravel needs these writable
+# (Proven fix, previously lived in applications/crementation/base/deployment.yaml.)
+command: ["/bin/sh", "-c"]
+args:
+  - |
+    # Apache: serve Laravel's public/ front controller with .htaccess rewrites.
+    sed -i '/DocumentRoot/a \ \t<Directory ${APACHE_DOCUMENT_ROOT}>\n\t\tAllowOverride All\n\t\tDirectoryIndex index.php\n\t</Directory>' /etc/apache2/sites-available/000-default.conf
+    a2enmod rewrite || true
+    # The image bakes `php artisan config:cache` (and route/service caching)
+    # at BUILD time into bootstrap/cache/*.php — config.php (Laravel defaults,
+    # db "forge", no APP_KEY), routes-v7.php, services.php, packages.php.
+    # Laravel reads those cached files and IGNORES every runtime env var while
+    # they exist (that's the whole point of caching — it skips re-reading
+    # .env/config on every request). Two-part fix, both required:
+    #   1. write a REAL .env from the container's env vars — Laravel's env()
+    #      helper is designed to read .env, this is the supported path (not
+    #      just relying on getenv() reaching every config consumer).
+    #   2. `php artisan optimize:clear` — deletes ALL the baked caches (config,
+    #      routes, views, services/packages, events), not just config.php, so
+    #      everything rebuilds fresh from that .env on the next request.
+    { echo "APP_ENV=${APP_ENV:-production}"; echo "APP_DEBUG=${APP_DEBUG:-false}"; \
+      echo "APP_KEY=${APP_KEY}"; echo "APP_URL=https://${APP_URL_HOST:-localhost}"; \
+      echo "DB_CONNECTION=${DB_CONNECTION:-mysql}"; echo "DB_HOST=${DB_HOST}"; \
+      echo "DB_PORT=${DB_PORT:-3306}"; echo "DB_DATABASE=${DB_DATABASE}"; \
+      echo "DB_USERNAME=${DB_USERNAME}"; echo "DB_PASSWORD=${DB_PASSWORD}"; \
+      echo "LOG_CHANNEL=${LOG_CHANNEL:-stack}"; echo "LOG_STDERR_FORMATTER=${LOG_STDERR_FORMATTER:-}"; \
+    } > /var/www/html/.env
+    chmod 666 /var/www/html/.env 2>/dev/null || true
+    php artisan optimize:clear || true
+    # Storage + cache must be writable (Laravel logs/sessions/views).
+    chmod -R 777 /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
+    # Create the app tables in the BACKGROUND (retrying until MySQL is ready),
+    # so Apache can start serving immediately and the liveness probe passes —
+    # otherwise migrate blocks the container long enough to get killed.
+    ( for i in 1 2 3 4 5 6 7 8 9; do php artisan migrate --force && break || sleep 10; done ) &
+    exec apache2-foreground
+
 # DB_HOST / DB_DATABASE / DB_USERNAME / DB_PASSWORD / APP_KEY, sourced from
 # Vault via the laravel-db ExternalSecret
 # (infrastructure/external-secrets/external-secrets.yaml).
@@ -30,6 +75,13 @@ envFrom:
 
 # Non-secret Laravel runtime config (mirrors sample-app-master/docker-compose.yaml).
 env:
+  # Apache serves ${APACHE_DOCUMENT_ROOT} (the Dockerfile rewrote its vhost to
+  # that variable). It must point at Laravel's public/ dir, or Apache serves
+  # the app root and shows a bare "Index of /" directory listing instead of the
+  # app. The image sets this via ENV, but we pin it explicitly here so the
+  # deployment never runs with it unset/overridden.
+  - name: APACHE_DOCUMENT_ROOT
+    value: /var/www/html/public
   - name: APP_ENV
     value: production
   - name: APP_DEBUG
@@ -76,16 +128,34 @@ podAnnotations:
 # kustomize helm inflator. Leave empty unless you need genuinely extra labels.
 podLabels: {}
 
-# NOTE: the php:8.2-apache base image runs apache2-foreground as root to bind
-# port 80 and its entrypoint chmods storage/ at startup, so runAsNonRoot is not
-# safe here without reworking the image (see sample-app-master/Dockerfile).
-podSecurityContext: {}
+# The php:8.2-apache image is DESIGNED to start as root: the entrypoint (and our
+# startup args) must delete the root-owned baked config cache, chmod storage/,
+# and let Apache bind :80 + fork workers as www-data. runAsUser:0 makes the
+# startup command run as root; Apache then drops privilege to www-data itself.
+# (runAsNonRoot isn't possible with this base image without rebuilding it.)
+podSecurityContext:
+  runAsUser: 0
 
 securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop:
       - ALL
+    # Apache (php:8.2-apache) starts as root then forks workers as the www-data
+    # user/group — it needs SETGID/SETUID to do that. Without them the workers
+    # crash with "setgid: Operation not permitted" and every request 500s.
+    # NET_BIND_SERVICE lets it bind port 80. These three are the minimum the
+    # image needs; everything else stays dropped.
+    add:
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+      # DAC_OVERRIDE: even as root, `drop: ALL` removes the capability to
+      # bypass file permissions — so the startup script can't delete the
+      # root-owned baked config.php or write to storage/. Add it back.
+      - DAC_OVERRIDE
+      - CHOWN
+      - FOWNER
 
 service:
   type: ClusterIP
