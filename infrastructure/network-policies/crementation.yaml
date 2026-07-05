@@ -49,6 +49,14 @@ spec:
     - Ingress
   ingress:
     - from:
+        # ingress-nginx runs with hostNetwork:true on the ingress node, so its
+        # traffic to the app arrives with the NODE's IP, not a pod IP in the
+        # ingress-nginx namespace — a namespaceSelector alone never matches it
+        # (this is why crementation.local returned 504). Allow the node subnet
+        # CIDR via ipBlock so hostNetwork ingress traffic reaches the app.
+        # 10.0.1.0/24 is the terraform public subnet (see terraform/main.tf).
+        - ipBlock:
+            cidr: 10.0.1.0/24
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: ingress-nginx
