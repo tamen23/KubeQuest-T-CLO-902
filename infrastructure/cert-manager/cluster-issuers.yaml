@@ -54,7 +54,7 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: admin@example.com # replace with a real, monitored address before use
+    email: leotamen22@gmail.com # Let's Encrypt expiry/renewal notices go here
     privateKeySecretRef:
       name: letsencrypt-prod-account-key
     solvers:

@@ -133,10 +133,17 @@ base64 -w0 ./kubeconfig-kubequest   > kubeconfig.b64
 rm kubeconfig.b64   # don't leave it lying around
 ```
 
-Set once per cluster (the public IP changes if you recreate the instance — a
-fresh cluster means a fresh KUBECONFIG_B64). Then trigger the deploy: **Actions
-tab → Deploy → Run workflow**. It seeds Vault from your GitHub secrets and lets
-ArgoCD deploy everything — no secrets typed.
+**You only do this ONCE.** The control-plane node has a **static Elastic IP**
+(`aws_eip.control_plane`), so its public IP never changes — not on stop/start,
+not even on destroy/recreate (the address is reserved to your account). So the
+kubeconfig's `server:` line stays valid forever and `KUBECONFIG_B64` never
+needs regenerating. Then trigger the deploy: **Actions tab → Deploy → Run
+workflow**. It seeds Vault from your GitHub secrets and lets ArgoCD deploy
+everything — no secrets typed.
+
+> The one time you'd redo `KUBECONFIG_B64` is if you `terraform destroy` the
+> EIP itself (a full teardown that releases the address). If you keep the EIP
+> and only stop/start instances, the kubeconfig is permanent.
 
 Alternatively, deploy from your laptop with `personal/bootstrap.sh` (which
 already has local cluster access) instead of the workflow.

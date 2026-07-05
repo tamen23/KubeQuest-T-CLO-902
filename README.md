@@ -399,21 +399,22 @@ on `main` only):
 
 1. **`build-and-scan-image`** — builds the `crementation` app image from
    `sample-app-master/Dockerfile` (scan-only, not pushed anywhere), scans it
-   with [Trivy](https://trivy.dev/) for CRITICAL/HIGH CVEs. Findings upload
-   as SARIF to the repo's Security tab. Does not currently fail the build —
-   the base image (`php:8.2-apache`) always carries some upstream CVEs
-   outside our control; the intent is visibility first.
+   with [Trivy](https://trivy.dev/). All CRITICAL/HIGH findings upload as SARIF
+   to the repo's Security tab (visibility), and a second Trivy pass **fails the
+   build on any FIXABLE CRITICAL** (`ignore-unfixed: true`) — so unfixable
+   upstream base-image CVEs (`php:8.2-apache` always carries some) don't red
+   every run, but a critical we can actually patch does.
 
 2. **`lint-manifests`** — renders every Kustomize tree this repo deploys
    (`infrastructure/`, `applications/crementation/base/`,
    `applications/mysql/`) via `kustomize build --enable-helm --load-restrictor
-   LoadRestrictionsNone`, then runs **kube-linter** (config:
-   `.kube-linter.yaml`, three checks explicitly excluded there —
-   `host-network`, `host-port`, `run-as-non-root` — each a documented accepted
-   trade-off, see Security review below) and **`helm lint`** against the
-   `crementation/` chart source. Because the three renders actually pull and
-   template every chart, this job doubles as a "does the whole thing still
-   build" gate.
+   LoadRestrictionsNone`, then runs **kube-linter** (**blocking** — config
+   `.kube-linter.yaml` excludes four documented, accepted checks:
+   `host-network`, `host-port`, `run-as-non-root`, `non-existent-service-account`,
+   each justified in Security review below; any *other* finding fails the job)
+   and **`helm lint`** against the `crementation/` chart source. Because the
+   three renders actually pull and template every chart, this job doubles as a
+   "does the whole thing still build" gate.
 
 3. **`network-policy-check`** — a repo-structure check confirming every
    namespace that's supposed to have a deny-by-default NetworkPolicy still

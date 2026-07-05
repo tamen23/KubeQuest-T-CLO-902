@@ -55,3 +55,18 @@ resource "aws_eip" "ingress" {
   ])
   tags = { Name = "${var.project}-ingress-eip" }
 }
+
+# --- Elastic IP on the control-plane node ------------------------------------
+# A STATIC public IP for kube-1 so the kubeconfig (and the API cert SANs) never
+# change: bake this IP into the apiserver cert once with --apiserver-cert-extra-
+# sans, generate KUBECONFIG_B64 once, and it keeps working across stop/start and
+# even destroy/recreate (the address is reserved to the account). Without this,
+# the control-plane's public IP is ephemeral and you'd regenerate the kubeconfig
+# every session.
+resource "aws_eip" "control_plane" {
+  domain = "vpc"
+  instance = one([
+    for name, cfg in var.nodes : aws_instance.node[name].id if cfg.is_control_plane
+  ])
+  tags = { Name = "${var.project}-control-plane-eip" }
+}

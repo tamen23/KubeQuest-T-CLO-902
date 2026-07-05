@@ -41,7 +41,7 @@ jobs:
       ESO_NS: external-secrets-system
       ESO_SA: external-secrets
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install kubectl, helm, kustomize
         run: |

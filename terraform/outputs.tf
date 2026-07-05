@@ -19,9 +19,11 @@ output "nodes" {
 
 # Convenience: the control-plane node's public IP (where you SSH to run
 # `kubeadm init`) and its private IP (what the workers join against).
+# This is the STATIC Elastic IP (aws_eip.control_plane), so it's stable across
+# stop/start — bake it into the API cert SANs and KUBECONFIG_B64 once.
 output "control_plane_public_ip" {
-  description = "Public IP of the control-plane node (run kubeadm init here)."
-  value       = one([for name, cfg in var.nodes : aws_instance.node[name].public_ip if cfg.is_control_plane])
+  description = "Static Elastic IP of the control-plane node (kubeadm init + kubeconfig server)."
+  value       = aws_eip.control_plane.public_ip
 }
 
 output "control_plane_private_ip" {
