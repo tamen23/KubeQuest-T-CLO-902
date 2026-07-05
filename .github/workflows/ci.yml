@@ -1,8 +1,12 @@
 name: CI
 
 on:
+  # Run on pushes to the two long-lived branches, and on every PR into them.
+  # Feature branches (kubequest-*) are validated via their PR, not a direct-push
+  # run — this avoids the same commit triggering 2-3 duplicate runs when it's
+  # fast-forwarded across branches.
   push:
-    branches: [main, develop, "kubequest-*"]
+    branches: [main, develop]
   pull_request:
     branches: [main, develop]
 
@@ -175,7 +179,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     env:
       APP_IMAGE: maxi2/crementation-app
-      APP_IMAGE_TAG: v1.1.0 # keep in sync with crementation/values.yaml image.tag
+      APP_IMAGE_TAG: v1.1.1 # keep in sync with crementation/values.yaml image.tag
     steps:
       - uses: actions/checkout@v5
 
