@@ -37,6 +37,12 @@ resource "aws_instance" "node" {
   key_name               = aws_key_pair.node.key_name
   user_data              = file("${path.module}/user-data-kubeadm.sh")
 
+  # CRITICAL for pod networking: AWS drops any packet whose source/dest IP is
+  # not the instance's own — which is exactly what CNI overlay (VXLAN) and
+  # pod-to-pod traffic look like. Without this, cross-node pod networking
+  # silently fails (ingress -> app on another node times out). Must be false.
+  source_dest_check = false
+
   root_block_device {
     volume_size = var.root_volume_gb
     volume_type = "gp3"

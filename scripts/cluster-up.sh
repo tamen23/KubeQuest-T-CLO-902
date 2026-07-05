@@ -22,7 +22,6 @@ TF=terraform
 KEY="$TF/kubequest-key.pem"
 SSH_OPTS="-i $KEY -o StrictHostKeyChecking=no -o ConnectTimeout=30"
 POD_CIDR=192.168.0.0/16
-CALICO_VER=v3.28.0
 
 say() { printf '\n\033[1;36m== %s ==\033[0m\n' "$1"; }
 ok()  { printf '\033[1;32m  ✓ %s\033[0m\n' "$1"; }
@@ -79,13 +78,19 @@ ssh $SSH_OPTS ec2-user@"$CP_IP" "
     sudo kubeadm init --pod-network-cidr=$POD_CIDR \
       --apiserver-cert-extra-sans=$CP_IP --control-plane-endpoint=$CP_PRIV
     mkdir -p ~/.kube && sudo cp /etc/kubernetes/admin.conf ~/.kube/config && sudo chown \$(id -u):\$(id -g) ~/.kube/config
-    kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VER/manifests/calico.yaml
+    # Flannel CNI (VXLAN) — chosen over Calico because it's simple + reliable on
+    # AWS EC2 (needs source_dest_check=false on the instances, set in terraform).
+    # Flannel defaults to pod CIDR 10.244.0.0/16; patch it to match our
+    # --pod-network-cidr above so pods get IPs in the right range.
+    curl -sSL https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml -o /tmp/flannel.yml
+    sed -i 's#10.244.0.0/16#$POD_CIDR#g' /tmp/flannel.yml
+    kubectl apply -f /tmp/flannel.yml
     kubectl taint nodes --all node-role.kubernetes.io/control-plane- || true
   else
     echo 'already initialized, skipping'
   fi
 "
-ok "control plane up + Calico + untainted"
+ok "control plane up + Flannel CNI + untainted"
 
 # --- 3. join the 3 workers ---------------------------------------------------
 say "Joining workers"
