@@ -20,24 +20,24 @@ config:
 
 extraArgs:
   provider: oidc
-  # Split-horizon: the browser sees Dex at https://dex.local (the issuer), but
-  # oauth2-proxy itself talks to Dex in-cluster. oidc-issuer-url must match the
-  # token `iss` claim (https://dex.local); discovery/token/jwks are skipped and
+  # Split-horizon: the browser sees Dex at https://dex.35.181.119.189.nip.io
+  # (the issuer), but oauth2-proxy itself talks to Dex in-cluster.
+  # oidc-issuer-url must match the token `iss` claim
+  # (https://dex.35.181.119.189.nip.io); discovery/token/jwks are skipped and
   # pointed at the in-cluster Dex service so oauth2-proxy doesn't need to
-  # resolve dex.local. VERIFY ON CLUSTER: if login loops, the usual culprit is
-  # a mismatch between these URLs and Dex's actual issuer, or oauth2-proxy not
-  # trusting the internal-ca cert on the login-url.
-  oidc-issuer-url: https://dex.local
+  # resolve the public host. VERIFY ON CLUSTER: if login loops, the usual
+  # culprit is a mismatch between these URLs and Dex's actual issuer.
+  oidc-issuer-url: https://dex.35.181.119.189.nip.io
   skip-oidc-discovery: "true"
-  login-url: https://dex.local/auth
+  login-url: https://dex.35.181.119.189.nip.io/auth
   redeem-url: http://dex.auth.svc.cluster.local:5556/token
   oidc-jwks-url: http://dex.auth.svc.cluster.local:5556/keys
   redirect-url: https://oauth2-proxy.auth.svc.cluster.local/oauth2/callback
   email-domain: "*"
   reverse-proxy: true
-  cookie-secure: "true" # dashboard.local/grafana.local now serve TLS via cert-manager (infrastructure/cert-manager)
-  cookie-domain: .local
-  whitelist-domain: .local
+  cookie-secure: "true" # all hosts serve TLS via cert-manager/letsencrypt (infrastructure/cert-manager)
+  cookie-domain: .nip.io
+  whitelist-domain: .nip.io
   set-authorization-header: true
   set-xauthrequest: true
   skip-provider-button: true

@@ -18,19 +18,19 @@ ingress:
   enabled: true
   className: nginx
   annotations:
-    cert-manager.io/cluster-issuer: internal-ca
+    cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: dex.local
+    - host: dex.35.181.119.189.nip.io
       paths:
         - path: /
           pathType: Prefix
   tls:
     - secretName: dex-tls
       hosts:
-        - dex.local
+        - dex.35.181.119.189.nip.io
 
 config:
-  issuer: https://dex.local
+  issuer: https://dex.35.181.119.189.nip.io
 
   storage:
     type: memory
@@ -53,9 +53,9 @@ config:
       # cert-manager (internal-ca issuer) — see infrastructure/cert-manager.
       redirectURIs:
         - http://oauth2-proxy.auth.svc.cluster.local/oauth2/callback
-        - https://dashboard.local/oauth2/callback
-        - https://grafana.local/oauth2/callback
-        - https://argocd.local/oauth2/callback
+        - https://dashboard.35.181.119.189.nip.io/oauth2/callback
+        - https://grafana.35.181.119.189.nip.io/oauth2/callback
+        - https://argocd.35.181.119.189.nip.io/oauth2/callback
 
   connectors:
     - type: github
@@ -66,7 +66,7 @@ config:
         clientSecret: $GITHUB_CLIENT_SECRET
         # Must equal <issuer>/callback and be registered as the Authorization
         # callback URL in the GitHub OAuth app settings.
-        redirectURI: https://dex.local/callback
+        redirectURI: https://dex.35.181.119.189.nip.io/callback
         orgs:
           - name: maxiboole2
 
