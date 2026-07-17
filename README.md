@@ -1,4 +1,25 @@
-# T-CLO-902-PAR_4 — KubeQuest
+# KubeQuest — Production-grade Kubernetes GitOps Platform
+
+> **Epitech MSc Pro — T-CLO-902 (Cloud project).** A complete, self-hosted Kubernetes
+> platform on AWS: a Laravel + MySQL app migrated from docker-compose to Helm/Kustomize,
+> deployed with GitOps and wrapped in ingress, dashboards, monitoring, logging, secrets
+> management, OIDC auth, network policies, backups, and policy enforcement.
+
+### At a glance
+
+| | |
+|---|---|
+| **What it is** | A full cluster platform + application, deployed the GitOps way |
+| **App** | Laravel (PHP) + MySQL (primary + 2 read replicas), packaged as a Helm chart |
+| **Platform** | ingress-nginx, kubernetes-dashboard, kube-prometheus-stack (Prometheus/Grafana/Alertmanager), Loki + Alloy (logs), External Secrets + Vault, Dex + oauth2-proxy (OIDC), cert-manager, OPA Gatekeeper, Velero (backups), ArgoCD |
+| **Infra** | 4× AWS EC2 (Amazon Linux): control-plane+worker, worker, ingress, monitoring |
+| **Delivery** | Kustomize + `kustomize build --enable-helm`, optional ArgoCD auto-sync, GitHub Actions CI (image build, CVE scan, manifest lint, NetworkPolicy coverage) |
+
+**New here?** Read this file top-to-bottom for the architecture, then follow the
+deployment runbooks in [`docs/`](docs/index.md). The [Repository layout](#repository-layout)
+and [Architecture](#architecture) sections below explain where everything lives.
+
+---
 
 Kubernetes GitOps deployment for the KubeQuest project: a full cluster
 platform (ingress, dashboard, monitoring, logging, secrets, auth, policy)
